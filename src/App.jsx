@@ -55,6 +55,7 @@ const entityCopy = {
 const allowedEmail = import.meta.env.VITE_ALLOWED_EMAIL?.trim().toLowerCase() ?? ''
 const imageCompressionTarget = 800 * 1024
 const imageCompressionMinQuality = 0.62
+const shouldBlockUnconfiguredProduction = import.meta.env.PROD && !isSupabaseConfigured
 
 const fileToDataUrl = (file) =>
   new Promise((resolve, reject) => {
@@ -534,6 +535,10 @@ function App() {
     )
   }
 
+  if (shouldBlockUnconfiguredProduction) {
+    return <MissingConfigPage />
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="主選單">
@@ -722,6 +727,31 @@ function App() {
         />
       )}
     </div>
+  )
+}
+
+function MissingConfigPage() {
+  return (
+    <main className="auth-page">
+      <section className="auth-card">
+        <div className="brand auth-brand">
+          <div className="brand-mark" aria-hidden="true">
+            <Palette size={22} />
+          </div>
+          <div>
+            <strong>毛線管理系統</strong>
+            <span>部署設定未完成</span>
+          </div>
+        </div>
+        <div>
+          <h1>缺少 Supabase 設定</h1>
+          <p>
+            正式部署需要設定 Vercel 環境變數：VITE_SUPABASE_URL、
+            VITE_SUPABASE_PUBLISHABLE_KEY、VITE_ALLOWED_EMAIL。
+          </p>
+        </div>
+      </section>
+    </main>
   )
 }
 

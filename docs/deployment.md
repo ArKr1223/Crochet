@@ -28,6 +28,8 @@ Photos are compressed in the browser before upload, stored in the private `craft
    - `VITE_ALLOWED_EMAIL`
 5. Deploy.
 
+After adding or changing environment variables in Vercel, redeploy the project. A previously built deployment keeps the old environment values. Production builds without Supabase environment variables show a configuration warning instead of the local demo data.
+
 Vercel builds with `npm run build` and serves the `dist` folder. `vercel.json` includes a rewrite to `index.html` so the app behaves like a single-page app if routes are added later.
 
 ## GitHub Pages
