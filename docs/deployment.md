@@ -28,17 +28,20 @@ Photos are compressed in the browser before upload, stored in the private `craft
    - `VITE_ALLOWED_EMAIL`
 5. Deploy.
 
-After adding or changing environment variables in Vercel, redeploy the project. A previously built deployment keeps the old environment values. Production builds without Supabase environment variables show a configuration warning instead of the local demo data.
+Preview deployment URLs need Preview environment variables. If `VITE_ALLOWED_EMAIL` is Production-only, Preview URLs will not enforce the email allowlist. After adding or changing environment variables in Vercel, redeploy the project. A previously built deployment keeps the old environment values. Production builds without Supabase environment variables show a configuration warning instead of the local demo data.
 
 Vercel builds with `npm run build` and serves the `dist` folder. `vercel.json` includes a rewrite to `index.html` so the app behaves like a single-page app if routes are added later.
 
 ## GitHub Pages
+
+GitHub Pages is optional because the app is deployed on Vercel. The workflow is manual-only to avoid deployment failure emails on every push.
 
 1. Push this project to a GitHub repository.
 2. In the repository, open Settings > Secrets and variables > Actions.
 3. Add repository secrets:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
+   - `VITE_ALLOWED_EMAIL`
 4. Open Settings > Pages and set Source to GitHub Actions.
 5. Push to `main` or run the `Deploy to GitHub Pages` workflow manually.
 
