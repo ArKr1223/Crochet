@@ -547,7 +547,7 @@ function App() {
             <Palette size={22} />
           </div>
           <div>
-            <strong>毛線管理系統</strong>
+            <strong>毛毛庫</strong>
             <span>線材、織圖、專案</span>
           </div>
         </div>
@@ -595,7 +595,6 @@ function App() {
             {entityCopy[entityType].add}
           </button>
           <div className="connection-status">
-            <span>{dataStatus}</span>
             {user && (
               <button className="text-button" onClick={signOut} type="button">
                 登出
@@ -606,13 +605,10 @@ function App() {
 
         {activeNav === 'overview' && (
           <OverviewPage
-            activeProjects={activeProjects}
             onOpen={changeNav}
             patternCount={patterns.length}
             projectCount={activeProjects.length}
-            projects={projects}
             totalSkeins={totalSkeins}
-            yarns={yarns}
           />
         )}
 
@@ -777,9 +773,6 @@ function AuthPage({
         </div>
         <div>
           <h1>登入</h1>
-          <p>
-            僅允許 {allowedEmail || '指定帳號'} 登入；資料會依帳號儲存在 Supabase。
-          </p>
         </div>
         <Field label="Email" type="email" value={authEmail} onChange={onEmailChange} />
         <Field
@@ -798,17 +791,14 @@ function AuthPage({
 }
 
 function OverviewPage({
-  activeProjects,
   onOpen,
   patternCount,
   projectCount,
-  projects,
   totalSkeins,
-  yarns,
 }) {
   const stats = [
-    { id: 'yarns', icon: Palette, label: '線材總數', value: totalSkeins, unit: '線' },
-    { id: 'patterns', icon: BookOpen, label: '織圖數量', value: patternCount, unit: '個' },
+    { id: 'yarns', icon: Palette, label: '線材', value: totalSkeins, unit: '個' },
+    { id: 'patterns', icon: BookOpen, label: '織圖', value: patternCount, unit: '個' },
     { id: 'projects', icon: Gauge, label: '進行中專案', value: projectCount, unit: '個' },
   ]
 
@@ -816,7 +806,6 @@ function OverviewPage({
     <section className="overview-page">
       <div className="page-title">
         <h1>總覽</h1>
-        <span>點擊統計卡可進入對應頁面</span>
       </div>
       <div className="stats-row">
         {stats.map((stat) => {
@@ -843,37 +832,6 @@ function OverviewPage({
         })}
       </div>
 
-      <div className="overview-grid">
-        <SummaryPanel title="最近線材" action="查看線材" onAction={() => onOpen('yarns')}>
-          {yarns.slice(0, 4).map((yarn) => (
-            <ListRow
-              key={yarn.id}
-              image={yarn.image}
-              title={yarn.name}
-              meta={`${yarn.color} / ${yarn.quantity} 線`}
-            />
-          ))}
-        </SummaryPanel>
-        <SummaryPanel title="進行中專案" action="查看專案" onAction={() => onOpen('projects')}>
-          {activeProjects.slice(0, 4).map((project) => (
-            <ListRow
-              key={project.id}
-              image={project.image}
-              title={project.name}
-              meta={`${project.progress}% / ${project.currentStep}`}
-            />
-          ))}
-        </SummaryPanel>
-        <div className="project-preview-wide">
-          <div className="section-heading compact">
-            <div>
-              <h2>專案進度</h2>
-              <span>共 {projects.length} 個</span>
-            </div>
-          </div>
-          <ProjectCards projects={projects} />
-        </div>
-      </div>
     </section>
   )
 }
@@ -1377,35 +1335,6 @@ function Fact({ children, label }) {
       <dt>{label}</dt>
       <dd>{children}</dd>
     </div>
-  )
-}
-
-function SummaryPanel({ action, children, onAction, title }) {
-  return (
-    <section className="summary-panel">
-      <div className="section-heading compact">
-        <div>
-          <h2>{title}</h2>
-        </div>
-        <button className="text-button" onClick={onAction} type="button">
-          {action}
-        </button>
-      </div>
-      <div className="linked-list">{children}</div>
-    </section>
-  )
-}
-
-function ListRow({ image, meta, title }) {
-  return (
-    <article>
-      <img alt="" src={image} />
-      <div>
-        <strong>{title}</strong>
-        <span>{meta}</span>
-      </div>
-      <MoreHorizontal size={17} />
-    </article>
   )
 }
 

@@ -187,6 +187,7 @@ h3 {
 
 .search {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 12px;
   width: min(720px, 100%);
@@ -221,6 +222,8 @@ h3 {
 }
 
 .primary-button {
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: 0 18px;
   border: 1px solid #b6605f;
   background: var(--coral);
@@ -310,6 +313,15 @@ h3 {
 .stat-icon.sage {
   background: var(--sage-soft);
   color: var(--sage);
+}
+
+.stat-card > div:last-child {
+  min-width: 0;
+}
+
+.stat-card span {
+  font-size: 29px;
+  overflow-wrap: anywhere;
 }
 
 .stat-card strong {
