@@ -963,10 +963,36 @@ tbody tr.selected-row {
 }
 
 .form-grid {
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 14px;
 }
+
+button:disabled { cursor: wait; opacity: 0.6; }
+.form-error { color: #a12f37; padding: 14px 0; overflow-wrap: anywhere; }
+.photo-status {
+  position: fixed;
+  z-index: 40;
+  bottom: calc(85px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(480px, calc(100% - 32px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow-wrap: anywhere;
+}
+.photo-status button { display: grid; flex-shrink: 0; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; }
 
 .field {
   display: grid;
@@ -1247,6 +1273,8 @@ tbody tr.selected-row {
   }
   .modal-header > div { min-width: 0; }
   .modal-header button { flex-shrink: 0; width: 44px; height: 44px; }
+  .modal-actions { flex-direction: column-reverse; align-items: stretch; }
+  .modal-actions > button { width: 100%; }
   .field input, .field select, .field textarea, .search input, .select-like select {
     font-size: 16px;
   }

@@ -12,6 +12,7 @@ import {
   MoreHorizontal,
   PackagePlus,
   Palette,
+  Pencil,
   Plus,
   Search,
   Settings,
@@ -36,7 +37,11 @@ import {
   updateProjectImage,
   updateYarnImage,
   uploadCraftImage,
+  updateYarn,
+  updatePattern,
+  updateProject,
 } from './lib/craftRepository'
+import { compressImageFile } from './lib/imageCompression'
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient'
 
 const navigation = [
@@ -54,62 +59,17 @@ const entityCopy = {
 }
 
 const allowedEmail = import.meta.env.VITE_ALLOWED_EMAIL?.trim().toLowerCase() ?? ''
-const imageCompressionTarget = 800 * 1024
-const imageCompressionMinQuality = 0.62
 const shouldBlockUnconfiguredProduction = import.meta.env.PROD && !isSupabaseConfigured
 
 const fileToDataUrl = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result)
-    reader.onerror = reject
+    reader.onerror = () => reject(new Error('照片讀取失敗，請重新選取。'))
     reader.readAsDataURL(file)
   })
 
 const blobToDataUrl = fileToDataUrl
-
-async function compressImageFile(file) {
-  if (!file.type.startsWith('image/')) return file
-
-  const image = new Image()
-  const objectUrl = URL.createObjectURL(file)
-
-  try {
-    await new Promise((resolve, reject) => {
-      image.onload = resolve
-      image.onerror = reject
-      image.src = objectUrl
-    })
-
-    const scale = Math.min(1, 1600 / Math.max(image.width, image.height))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(image.width * scale))
-    canvas.height = Math.max(1, Math.round(image.height * scale))
-
-    const context = canvas.getContext('2d')
-    context.drawImage(image, 0, 0, canvas.width, canvas.height)
-
-    let quality = 0.82
-    let blob = await new Promise((resolve) =>
-      canvas.toBlob(resolve, 'image/webp', quality),
-    )
-
-    while (blob?.size > imageCompressionTarget && quality > imageCompressionMinQuality) {
-      quality -= 0.08
-      blob = await new Promise((resolve) =>
-        canvas.toBlob(resolve, 'image/webp', quality),
-      )
-    }
-
-    if (!blob) return file
-
-    return new File([blob], `${file.name.replace(/\.[^.]+$/, '')}.webp`, {
-      type: 'image/webp',
-    })
-  } finally {
-    URL.revokeObjectURL(objectUrl)
-  }
-}
 
 const isAllowedEmail = (email = '') =>
   !allowedEmail || email.trim().toLowerCase() === allowedEmail
@@ -138,6 +98,8 @@ function App() {
   const [viewMode, setViewMode] = useState('list')
   const [listWidth, setListWidth] = useState(380)
   const [modalType, setModalType] = useState(null)
+  const [editingEntity, setEditingEntity] = useState(null)
+  const [photoStatus, setPhotoStatus] = useState('')
   const [yarns, setYarns] = useState(isSupabaseConfigured ? [] : seedYarns)
   const [patterns, setPatterns] = useState(isSupabaseConfigured ? [] : seedPatterns)
   const [projects, setProjects] = useState(isSupabaseConfigured ? [] : seedProjects)
@@ -412,7 +374,7 @@ function App() {
   async function addEntity(values) {
     try {
       if (modalType === 'patterns') {
-        const patternId = isSupabaseConfigured && user ? crypto.randomUUID() : `pattern-${Date.now()}`
+        const patternId = editingEntity?.id ?? (isSupabaseConfigured && user ? crypto.randomUUID() : `pattern-${Date.now()}`)
         const uploadedImage =
           isSupabaseConfigured && user && values.imageFile
             ? await uploadCraftImage(values.imageFile, user.id, 'patterns', patternId)
@@ -423,17 +385,20 @@ function App() {
           category: values.category || '未分類',
           sourceType: 'photo',
           source: values.source || '本機匯入',
-          image: uploadedImage?.path ?? values.image ?? fallbackImage(values.name || 'Pattern', '#b96867'),
-          yarnUsage: [],
+          notes: values.notes || '',
+          ...(editingEntity ? values : {}),
+          image: uploadedImage?.path ?? editingEntity?.imagePath ?? (values.image || fallbackImage(values.name || 'Pattern', '#b96867')),
+          displayImage: uploadedImage?.url ?? values.image,
+          yarnUsage: editingEntity?.yarnUsage ?? [],
         }
         const savedPattern =
-          isSupabaseConfigured && user ? await createPattern(pattern, user.id) : pattern
+          isSupabaseConfigured && user ? await (editingEntity ? updatePattern : createPattern)(pattern, user.id) : { ...pattern, image: pattern.displayImage || pattern.image }
         if (uploadedImage) savedPattern.image = uploadedImage.url
-        setPatterns((current) => [savedPattern, ...current])
+        setPatterns((current) => editingEntity ? current.map((item) => item.id === savedPattern.id ? savedPattern : item) : [savedPattern, ...current])
         setSelectedPatternId(savedPattern.id)
         setActiveNav('patterns')
       } else if (modalType === 'projects') {
-        const projectId = isSupabaseConfigured && user ? crypto.randomUUID() : `project-${Date.now()}`
+        const projectId = editingEntity?.id ?? (isSupabaseConfigured && user ? crypto.randomUUID() : `project-${Date.now()}`)
         const uploadedImage =
           isSupabaseConfigured && user && values.imageFile
             ? await uploadCraftImage(values.imageFile, user.id, 'projects', projectId)
@@ -441,21 +406,28 @@ function App() {
         const project = {
           id: projectId,
           name: values.name || '未命名專案',
-          patternId: values.patternId || patterns[0]?.id,
+          patternId: values.patternId || null,
           status: values.status || '進行中',
           progress: Number(values.progress) || 0,
           currentStep: values.currentStep || '尚未新增進度',
-          image: uploadedImage?.path ?? values.image ?? fallbackImage(values.name || 'Project', '#517493'),
+          startDate: values.startDate || '',
+          endDate: values.endDate || '',
+          workType: values.workType || '',
+          yarnDescription: values.yarnDescription || '',
+          toolType: values.toolType || '',
+          hookSize: values.hookSize || '',
+          image: uploadedImage?.path ?? editingEntity?.imagePath ?? (values.image || fallbackImage(values.name || 'Project', '#517493')),
+          displayImage: uploadedImage?.url ?? values.image,
           notes: values.notes || '',
         }
         const savedProject =
-          isSupabaseConfigured && user ? await createProject(project, user.id) : project
+          isSupabaseConfigured && user ? await (editingEntity ? updateProject : createProject)(project, user.id) : { ...project, image: project.displayImage || project.image }
         if (uploadedImage) savedProject.image = uploadedImage.url
-        setProjects((current) => [savedProject, ...current])
+        setProjects((current) => editingEntity ? current.map((item) => item.id === savedProject.id ? savedProject : item) : [savedProject, ...current])
         setSelectedProjectId(savedProject.id)
         setActiveNav('projects')
       } else {
-        const yarnId = isSupabaseConfigured && user ? crypto.randomUUID() : `yarn-${Date.now()}`
+        const yarnId = editingEntity?.id ?? (isSupabaseConfigured && user ? crypto.randomUUID() : `yarn-${Date.now()}`)
         const uploadedImage =
           isSupabaseConfigured && user && values.imageFile
             ? await uploadCraftImage(values.imageFile, user.id, 'yarns', yarnId)
@@ -469,31 +441,44 @@ function App() {
           material: values.material || '未設定',
           weight: values.weight || '未設定',
           yardage: values.yardage || '未設定',
-          quantity: Number(values.quantity) || 1,
           price: values.price || '未設定',
           purchasePlace: values.purchasePlace || '未設定',
           notes: values.notes || '尚未新增備註。',
           storage: values.storage || '未設定',
-          image: uploadedImage?.path ?? values.image ?? fallbackImage(values.name || 'Yarn', values.colorHex),
-          linkedPatternIds: [],
+          ...(editingEntity ? values : {}),
+          quantity: Number(values.quantity),
+          image: uploadedImage?.path ?? editingEntity?.imagePath ?? (values.image || fallbackImage(values.name || 'Yarn', values.colorHex)),
+          displayImage: uploadedImage?.url ?? values.image,
+          linkedPatternIds: editingEntity?.linkedPatternIds ?? [],
         }
         const savedYarn =
-          isSupabaseConfigured && user ? await createYarn(yarn, user.id) : yarn
+          isSupabaseConfigured && user ? await (editingEntity ? updateYarn : createYarn)(yarn, user.id) : { ...yarn, image: yarn.displayImage || yarn.image }
         if (uploadedImage) savedYarn.image = uploadedImage.url
-        setYarns((current) => [savedYarn, ...current])
+        setYarns((current) => editingEntity ? current.map((item) => item.id === savedYarn.id ? savedYarn : item) : [savedYarn, ...current])
         setSelectedYarnId(savedYarn.id)
         setActiveNav('yarns')
       }
       setDataStatus(isSupabaseConfigured && user ? '已同步新增資料' : dataStatus)
       setModalType(null)
+      setEditingEntity(null)
     } catch (error) {
       setDataStatus(`新增失敗：${error.message}`)
+      throw error
     }
   }
 
   async function importPhoto(event) {
     const file = event.target.files?.[0]
     if (!file) return
+    try {
+    setPhotoStatus('照片處理中…')
+    const selectedId = entityType === 'patterns' ? selectedPatternId : entityType === 'projects' ? selectedProjectId : selectedYarnId
+    if (!selectedId) {
+      setEditingEntity(null)
+      setModalType(entityType)
+      setPhotoStatus('請在新增表單中選擇照片。')
+      return
+    }
     const imageFile = await compressImageFile(file)
     const image = await blobToDataUrl(imageFile)
 
@@ -507,7 +492,7 @@ function App() {
         uploadedImage && user ? await updatePatternImage(selectedPatternId, uploadedImage.path) : image
       setPatterns((current) =>
         current.map((pattern) =>
-          pattern.id === selectedPatternId ? { ...pattern, image: nextImage } : pattern,
+          pattern.id === selectedPatternId ? { ...pattern, image: nextImage, imagePath: uploadedImage?.path ?? image } : pattern,
         ),
       )
     } else if (entityType === 'projects') {
@@ -520,7 +505,7 @@ function App() {
         uploadedImage && user ? await updateProjectImage(selectedProjectId, uploadedImage.path) : image
       setProjects((current) =>
         current.map((project) =>
-          project.id === selectedProjectId ? { ...project, image: nextImage } : project,
+          project.id === selectedProjectId ? { ...project, image: nextImage, imagePath: uploadedImage?.path ?? image } : project,
         ),
       )
     } else {
@@ -533,12 +518,23 @@ function App() {
         uploadedImage && user ? await updateYarnImage(selectedYarnId, uploadedImage.path) : image
       setYarns((current) =>
         current.map((yarn) =>
-          yarn.id === selectedYarnId ? { ...yarn, image: nextImage } : yarn,
+          yarn.id === selectedYarnId ? { ...yarn, image: nextImage, imagePath: uploadedImage?.path ?? image } : yarn,
         ),
       )
     }
     setDataStatus(isSupabaseConfigured && user ? '照片已同步' : dataStatus)
+    setPhotoStatus('照片已更新')
+    } catch (error) {
+      setPhotoStatus(`照片更新失敗：${error.message}`)
+    } finally {
     event.target.value = ''
+    }
+  }
+
+  function openImport() {
+    const selected = entityType === 'patterns' ? selectedPattern : entityType === 'projects' ? selectedProject : selectedYarn
+    if (selected) importInputRef.current?.click()
+    else { setEditingEntity(null); setModalType(entityType) }
   }
 
   if (isSupabaseConfigured && !user) {
@@ -631,7 +627,7 @@ function App() {
 
           <button
             className="primary-button"
-            onClick={() => setModalType(entityType)}
+            onClick={() => { setEditingEntity(null); setModalType(entityType) }}
             type="button"
           >
             <Plus size={19} />
@@ -668,11 +664,12 @@ function App() {
                 />
               </>
             }
-            onImportClick={() => importInputRef.current?.click()}
+            onImportClick={openImport}
             title="線材"
             unit="種"
           >
             <YarnsView
+              onEdit={() => { setEditingEntity(selectedYarn); setModalType('yarns') }}
               onOpenPattern={openPattern}
               onCloseDetail={() => setSelectedYarnId(null)}
               onDeleteYarn={deleteYarn}
@@ -692,11 +689,12 @@ function App() {
         {activeNav === 'patterns' && (
           <EntityPage
             count={filteredPatterns.length}
-            onImportClick={() => importInputRef.current?.click()}
+            onImportClick={openImport}
             title="織圖"
             unit="個"
           >
             <PatternsView
+              onEdit={() => { setEditingEntity(selectedPattern); setModalType('patterns') }}
               onOpenYarn={openYarn}
               onPreviewImage={(image, title) => setLightboxImage({ image, title })}
               onCloseDetail={() => setSelectedPatternId(null)}
@@ -715,11 +713,12 @@ function App() {
         {activeNav === 'projects' && (
           <EntityPage
             count={filteredProjects.length}
-            onImportClick={() => importInputRef.current?.click()}
+            onImportClick={openImport}
             title="專案"
             unit="個"
           >
             <ProjectsView
+              onEdit={() => { setEditingEntity(selectedProject); setModalType('projects') }}
               patterns={patterns}
               projects={filteredProjects}
               onCloseDetail={() => setSelectedProjectId(null)}
@@ -751,12 +750,16 @@ function App() {
 
       {modalType && (
         <EntityModal
-          onClose={() => setModalType(null)}
+          initialValues={editingEntity}
+          yarns={yarns}
+          onClose={() => { setModalType(null); setEditingEntity(null) }}
           onSubmit={addEntity}
           patterns={patterns}
           type={modalType}
         />
       )}
+
+      {photoStatus && <div className="photo-status" role="status">{photoStatus}<button type="button" aria-label="關閉通知" onClick={() => setPhotoStatus('')}><X size={18} /></button></div>}
 
       {lightboxImage && (
         <ImageLightbox
@@ -910,6 +913,7 @@ function EntityPage({
 }
 
 function YarnsView({
+  onEdit,
   onOpenPattern,
   onCloseDetail,
   onDeleteYarn,
@@ -954,6 +958,7 @@ function YarnsView({
       </div>
       {selectedYarn && <ResizeHandle onResize={onResizeStart} />}
       <YarnDetail
+        onEdit={onEdit}
         linkedPatterns={linkedPatterns}
         onOpenPattern={onOpenPattern}
         onClose={onCloseDetail}
@@ -966,6 +971,7 @@ function YarnsView({
 }
 
 function PatternsView({
+  onEdit,
   onOpenYarn,
   onPreviewImage,
   onCloseDetail,
@@ -1003,6 +1009,7 @@ function PatternsView({
       </div>
       {selectedPattern && <ResizeHandle onResize={onResizeStart} />}
       <PatternDetail
+        onEdit={onEdit}
         onOpenYarn={onOpenYarn}
         onClose={onCloseDetail}
         onDelete={() => onDeletePattern(selectedPattern.id)}
@@ -1015,6 +1022,7 @@ function PatternsView({
 }
 
 function ProjectsView({
+  onEdit,
   onCloseDetail,
   onDeleteProject,
   onResizeStart,
@@ -1040,6 +1048,7 @@ function ProjectsView({
       </div>
       {selectedProject && <ResizeHandle onResize={onResizeStart} />}
       <ProjectDetail
+        onEdit={onEdit}
         onClose={onCloseDetail}
         onDelete={() => onDeleteProject(selectedProject.id)}
         patterns={patterns}
@@ -1178,6 +1187,7 @@ function ProjectCards({ onSelect, projects, selectedProjectId }) {
 }
 
 function YarnDetail({
+  onEdit,
   linkedPatterns,
   onClose,
   onDelete,
@@ -1190,6 +1200,7 @@ function YarnDetail({
   return (
     <aside className="entity-detail" aria-label="線材詳細資料">
       <DetailHeader
+        onEdit={onEdit}
         kicker={selectedYarn.brand}
         onClose={onClose}
         onDelete={onDelete}
@@ -1225,7 +1236,7 @@ function YarnDetail({
   )
 }
 
-function PatternDetail({ onClose, onDelete, onOpenYarn, onPreviewImage, pattern, yarns }) {
+function PatternDetail({ onEdit, onClose, onDelete, onOpenYarn, onPreviewImage, pattern, yarns }) {
   if (!pattern) return null
   const usedYarns = pattern.yarnUsage
     .map((usage) => ({
@@ -1237,6 +1248,7 @@ function PatternDetail({ onClose, onDelete, onOpenYarn, onPreviewImage, pattern,
   return (
     <aside className="entity-detail" aria-label="織圖詳細資料">
       <DetailHeader
+        onEdit={onEdit}
         kicker={pattern.category}
         onClose={onClose}
         onDelete={onDelete}
@@ -1254,6 +1266,7 @@ function PatternDetail({ onClose, onDelete, onOpenYarn, onPreviewImage, pattern,
         <Fact label="來源">{pattern.sourceType}</Fact>
         <Fact label="檔案/網站">{pattern.source}</Fact>
       </dl>
+      {pattern.notes && <div className="note-box">{pattern.notes}</div>}
       <section className="linked-section">
         <div className="subheading">
           <h3>使用線材</h3>
@@ -1280,13 +1293,14 @@ function PatternDetail({ onClose, onDelete, onOpenYarn, onPreviewImage, pattern,
   )
 }
 
-function ProjectDetail({ onClose, onDelete, patterns, project }) {
+function ProjectDetail({ onEdit, onClose, onDelete, patterns, project }) {
   if (!project) return null
   const pattern = patterns.find((item) => item.id === project.patternId)
 
   return (
     <aside className="entity-detail" aria-label="專案詳細資料">
       <DetailHeader
+        onEdit={onEdit}
         kicker={project.status}
         onClose={onClose}
         onDelete={onDelete}
@@ -1294,6 +1308,12 @@ function ProjectDetail({ onClose, onDelete, patterns, project }) {
       />
       <img className="detail-photo" alt="" src={project.image} />
       <dl className="facts">
+        <Fact label="開始日期">{project.startDate || '未設定'}</Fact>
+        <Fact label="作品類型">{project.workType || '未設定'}</Fact>
+        <Fact label="毛線">{project.yarnDescription || '未設定'}</Fact>
+        <Fact label="棒針/鉤針">{project.toolType || '未設定'}</Fact>
+        <Fact label="Hook size">{project.hookSize || '未設定'}</Fact>
+        <Fact label="完成日期">{project.endDate || '未設定'}</Fact>
         <Fact label="進度">{project.progress}%</Fact>
         <Fact label="目前進度">{project.currentStep}</Fact>
         <Fact label="織圖">{pattern?.name ?? '尚未連結'}</Fact>
@@ -1304,6 +1324,7 @@ function ProjectDetail({ onClose, onDelete, patterns, project }) {
           <span style={{ width: `${project.progress}%` }} />
         </div>
       </div>
+      {project.notes && <div className="note-box">{project.notes}</div>}
     </aside>
   )
 }
@@ -1359,7 +1380,7 @@ function ImageLightbox({ image, onClose, title }) {
   )
 }
 
-function DetailHeader({ kicker, onClose, onDelete, title }) {
+function DetailHeader({ kicker, onEdit, onClose, onDelete, title }) {
   return (
     <div className="detail-header">
       <div>
@@ -1367,6 +1388,7 @@ function DetailHeader({ kicker, onClose, onDelete, title }) {
         <span>{kicker}</span>
       </div>
       <div className="detail-actions">
+        <button className="detail-close" onClick={onEdit} title="編輯" type="button"><Pencil size={18} /></button>
         <button className="detail-delete" onClick={onDelete} title="刪除" type="button">
           <Trash2 size={18} />
         </button>
@@ -1426,7 +1448,7 @@ function SelectLike({ label, options, onChange }) {
   )
 }
 
-function EntityModal({ onClose, onSubmit, patterns, type }) {
+function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }) {
   const [form, setForm] = useState({
     colorHex: '#c78f8f',
     image: '',
@@ -1434,47 +1456,85 @@ function EntityModal({ onClose, onSubmit, patterns, type }) {
     progress: 0,
     sourceType: 'photo',
     status: '進行中',
+    ...initialValues,
+    imageFile: null,
   })
-  const title = entityCopy[type]?.add ?? '新增項目'
+  const [processingPhoto, setProcessingPhoto] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const busyRef = useRef(false)
+  const errorRef = useRef(null)
+  const photoRequest = useRef(0)
+  const title = initialValues ? `編輯${entityCopy[type].title}` : entityCopy[type]?.add ?? '新增項目'
+
+  useEffect(() => () => { photoRequest.current += 1 }, [])
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ block: 'center' })
+  }, [error])
 
   async function handleFile(event) {
     const file = event.target.files?.[0]
     if (!file) return
+    const request = ++photoRequest.current
+    setProcessingPhoto(true)
+    setError('')
+    try {
     const imageFile = await compressImageFile(file)
     const image = await blobToDataUrl(imageFile)
+    if (request !== photoRequest.current) return
     setForm((current) => ({ ...current, image, imageFile }))
+    } catch (cause) {
+      if (request === photoRequest.current) setError(cause.message)
+    } finally {
+      if (request === photoRequest.current) setProcessingPhoto(false)
+      event.target.value = ''
+    }
   }
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault()
-    onSubmit(form)
+    if (busyRef.current || processingPhoto) return
+    if (form.startDate && form.endDate && form.endDate < form.startDate) {
+      setError('完成日期不可早於開始日期。')
+      return
+    }
+    busyRef.current = true
+    setSaving(true)
+    setError('')
+    try {
+      await onSubmit(form)
+    } catch (cause) {
+      setError(`儲存失敗：${cause.message}`)
+    } finally {
+      busyRef.current = false
+      setSaving(false)
+    }
   }
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <form className="modal" onSubmit={handleSubmit}>
+      <form className="modal" onSubmit={handleSubmit} aria-busy={saving || processingPhoto}>
         <div className="modal-header">
           <div>
             <h2>{title}</h2>
-            <span>可直接上傳照片，不需要輸入圖片 URL。</span>
           </div>
-          <button onClick={onClose} title="關閉" type="button">
+          <button disabled={saving} onClick={onClose} title="關閉" type="button">
             <X size={20} />
           </button>
         </div>
 
         <label className="photo-picker">
-          <input accept="image/*" onChange={handleFile} type="file" />
+          <input disabled={saving || processingPhoto} accept="image/*,.heic,.heif" onChange={handleFile} type="file" />
           {form.image ? <img alt="" src={form.image} /> : <ImagePlus size={32} />}
-          <span>{form.image ? '更換照片' : '新增照片'}</span>
+          <span>{processingPhoto ? '照片處理中…' : form.image ? '更換照片' : '新增照片'}</span>
         </label>
 
-        <div className="form-grid">
-          <Field label="名稱" value={form.name ?? ''} onChange={(value) => updateField('name', value)} />
+        <fieldset className="form-grid" disabled={saving}>
+          <Field label="名稱" required value={form.name ?? ''} onChange={(value) => updateField('name', value)} />
           {type === 'yarns' && (
             <>
               <Field label="品牌" value={form.brand ?? ''} onChange={(value) => updateField('brand', value)} />
@@ -1490,7 +1550,7 @@ function EntityModal({ onClose, onSubmit, patterns, type }) {
               <Field label="材質" value={form.material ?? ''} onChange={(value) => updateField('material', value)} />
               <Field label="重量" value={form.weight ?? ''} onChange={(value) => updateField('weight', value)} />
               <Field label="長度" value={form.yardage ?? ''} onChange={(value) => updateField('yardage', value)} />
-              <Field label="數量" type="number" value={form.quantity} onChange={(value) => updateField('quantity', value)} />
+              <Field label="數量" type="number" min="0" step="1" required value={form.quantity} onChange={(value) => updateField('quantity', value)} />
               <Field label="價格" value={form.price ?? ''} onChange={(value) => updateField('price', value)} />
               <Field label="購買地點" value={form.purchasePlace ?? ''} onChange={(value) => updateField('purchasePlace', value)} />
               <Field label="存放位置" value={form.storage ?? ''} onChange={(value) => updateField('storage', value)} />
@@ -1504,12 +1564,25 @@ function EntityModal({ onClose, onSubmit, patterns, type }) {
           )}
           {type === 'projects' && (
             <>
+              <Field label="開始日期" type="date" value={form.startDate ?? ''} onChange={(value) => updateField('startDate', value)} />
+              <Field label="作品類型" value={form.workType ?? ''} onChange={(value) => updateField('workType', value)} />
+              <Field label="毛線" list="project-yarn-names" value={form.yarnDescription ?? ''} onChange={(value) => updateField('yarnDescription', value)} />
+              <datalist id="project-yarn-names">{yarns.map((yarn) => <option key={yarn.id} value={yarn.name} />)}</datalist>
+              <label className="field">
+                <span>棒針/鉤針</span>
+                <select aria-label="棒針/鉤針" value={form.toolType ?? ''} onChange={(event) => updateField('toolType', event.target.value)}>
+                  <option value="">未設定</option><option value="棒針">棒針</option><option value="鉤針">鉤針</option>
+                </select>
+              </label>
+              <Field label="Hook size" value={form.hookSize ?? ''} onChange={(value) => updateField('hookSize', value)} />
+              <Field label="完成日期" type="date" min={form.startDate || undefined} value={form.endDate ?? ''} onChange={(value) => updateField('endDate', value)} />
               <label className="field">
                 <span>織圖</span>
                 <select
                   onChange={(event) => updateField('patternId', event.target.value)}
-                  value={form.patternId ?? patterns[0]?.id}
+                  value={form.patternId ?? ''}
                 >
+                  <option value="">未連結</option>
                   {patterns.map((pattern) => (
                     <option key={pattern.id} value={pattern.id}>
                       {pattern.name}
@@ -1518,7 +1591,7 @@ function EntityModal({ onClose, onSubmit, patterns, type }) {
                 </select>
               </label>
               <Field label="狀態" value={form.status} onChange={(value) => updateField('status', value)} />
-              <Field label="進度" type="number" value={form.progress} onChange={(value) => updateField('progress', value)} />
+              <Field label="進度" type="number" min="0" max="100" step="1" required value={form.progress} onChange={(value) => updateField('progress', value)} />
               <Field label="目前進度" value={form.currentStep ?? ''} onChange={(value) => updateField('currentStep', value)} />
             </>
           )}
@@ -1526,14 +1599,15 @@ function EntityModal({ onClose, onSubmit, patterns, type }) {
             <span>備註</span>
             <textarea value={form.notes ?? ''} onChange={(event) => updateField('notes', event.target.value)} />
           </label>
-        </div>
+        </fieldset>
+        {error && <p ref={errorRef} className="form-error" role="alert">{error}</p>}
         <div className="modal-actions">
-          <button className="ghost-button" onClick={onClose} type="button">
+          <button disabled={saving} className="ghost-button" onClick={onClose} type="button">
             取消
           </button>
-          <button className="primary-button" type="submit">
-            <PackagePlus size={18} />
-            建立
+          <button disabled={saving || processingPhoto} className="primary-button" type="submit">
+            {saving ? <LoaderCircle className="loading-spinner" size={18} /> : initialValues ? <Pencil size={18} /> : <PackagePlus size={18} />}
+            {processingPhoto ? '處理照片中…' : saving ? '儲存中…' : initialValues ? '儲存修改' : '建立'}
           </button>
         </div>
       </form>
@@ -1541,11 +1615,11 @@ function EntityModal({ onClose, onSubmit, patterns, type }) {
   )
 }
 
-function Field({ label, onChange, type = 'text', value }) {
+function Field({ label, onChange, type = 'text', value, ...inputProps }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input onChange={(event) => onChange(event.target.value)} type={type} value={value} />
+      <input {...inputProps} onChange={(event) => onChange(event.target.value)} type={type} value={value} />
     </label>
   )
 }

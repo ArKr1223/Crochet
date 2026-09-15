@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient'
+import { IMAGE_MAX_BYTES } from './imageCompression'
 
 const IMAGE_BUCKET = 'craft-images'
 const SIGNED_IMAGE_SECONDS = 60 * 60 * 24
@@ -82,6 +83,12 @@ const projectFromRow = (row) => ({
   id: row.id,
   name: row.name,
   patternId: row.pattern_id,
+  startDate: row.start_date ?? '',
+  endDate: row.end_date ?? '',
+  workType: row.work_type ?? '',
+  yarnDescription: row.yarn_description ?? '',
+  toolType: row.tool_type ?? '',
+  hookSize: row.hook_size ?? '',
   status: row.status ?? '進行中',
   progress: row.progress ?? 0,
   currentStep: row.current_step ?? '',
@@ -92,7 +99,13 @@ const projectFromRow = (row) => ({
 const projectToRow = (project, userId) => ({
   id: project.id,
   user_id: userId,
-  pattern_id: project.patternId,
+  pattern_id: project.patternId || null,
+  start_date: project.startDate || null,
+  end_date: project.endDate || null,
+  work_type: project.workType || '',
+  yarn_description: project.yarnDescription || '',
+  tool_type: project.toolType || null,
+  hook_size: project.hookSize || '',
   name: project.name,
   status: project.status,
   progress: project.progress,
@@ -131,7 +144,9 @@ async function projectFromRowWithImage(row) {
 }
 
 export async function uploadCraftImage(file, userId, entityType, entityId) {
-  const extension = file.type === 'image/png' ? 'png' : 'webp'
+  const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[file.type]
+  if (!extension) throw new Error('請選擇 JPG、PNG 或 WebP 照片。')
+  if (file.size > IMAGE_MAX_BYTES) throw new Error('照片超過 800 KB，請重新選取以壓縮。')
   const path = `${userId}/${entityType}/${entityId}-${Date.now()}.${extension}`
   const { error } = await requireSupabase()
     .storage
@@ -139,10 +154,10 @@ export async function uploadCraftImage(file, userId, entityType, entityId) {
     .upload(path, file, {
       cacheControl: '31536000',
       contentType: file.type || 'image/webp',
-      upsert: true,
+      upsert: false,
     })
 
-  if (error) throw error
+  if (error) throw new Error(`照片上傳失敗：${error.message}`)
   return {
     path,
     url: await imageUrlFromPath(path),
@@ -184,7 +199,7 @@ export async function createYarn(yarn, userId) {
     .select()
     .single()
   if (error) throw error
-  return yarnFromRowWithImage(data)
+  return { ...yarnFromRow(data), imagePath: data.image_url, image: yarn.displayImage || yarn.image }
 }
 
 export async function createPattern(pattern, userId) {
@@ -194,7 +209,7 @@ export async function createPattern(pattern, userId) {
     .select()
     .single()
   if (error) throw error
-  return patternFromRowWithImage(data, [])
+  return { ...patternFromRow(data, []), imagePath: data.image_url, image: pattern.displayImage || pattern.image }
 }
 
 export async function createProject(project, userId) {
@@ -204,7 +219,31 @@ export async function createProject(project, userId) {
     .select()
     .single()
   if (error) throw error
-  return projectFromRowWithImage(data)
+  return { ...projectFromRow(data), imagePath: data.image_url, image: project.displayImage || project.image }
+}
+
+export async function updateYarn(yarn, userId) {
+  const { data, error } = await requireSupabase().from('yarns')
+    .update({ ...yarnToRow(yarn, userId), updated_at: new Date().toISOString() })
+    .eq('id', yarn.id).eq('user_id', userId).select().single()
+  if (error) throw error
+  return { ...yarnFromRow(data), linkedPatternIds: yarn.linkedPatternIds ?? [], imagePath: data.image_url, image: yarn.displayImage ?? yarn.image }
+}
+
+export async function updatePattern(pattern, userId) {
+  const { data, error } = await requireSupabase().from('patterns')
+    .update({ ...patternToRow(pattern, userId), updated_at: new Date().toISOString() })
+    .eq('id', pattern.id).eq('user_id', userId).select().single()
+  if (error) throw error
+  return { ...patternFromRow(data, []), yarnUsage: pattern.yarnUsage ?? [], imagePath: data.image_url, image: pattern.displayImage ?? pattern.image }
+}
+
+export async function updateProject(project, userId) {
+  const { data, error } = await requireSupabase().from('projects')
+    .update({ ...projectToRow(project, userId), updated_at: new Date().toISOString() })
+    .eq('id', project.id).eq('user_id', userId).select().single()
+  if (error) throw error
+  return { ...projectFromRow(data), imagePath: data.image_url, image: project.displayImage ?? project.image }
 }
 
 export async function updateYarnImage(yarnId, imagePath) {
