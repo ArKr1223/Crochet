@@ -1,4 +1,4 @@
-# GitHub Pages and Supabase setup
+# Deployment and Supabase setup
 
 ## Supabase
 
@@ -13,6 +13,18 @@ VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 ```
 
 The app uses Supabase Auth. When these environment variables exist, users must sign in before reading or writing yarns, patterns, and projects. Row Level Security in `supabase/schema.sql` keeps each user's rows private.
+
+## Vercel
+
+1. Push this project to GitHub.
+2. In Vercel, create a new project and import `ArKr1223/Crochet`.
+3. Keep the framework preset as Vite.
+4. Add Environment Variables for Production, Preview, and Development:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
+5. Deploy.
+
+Vercel builds with `npm run build` and serves the `dist` folder. `vercel.json` includes a rewrite to `index.html` so the app behaves like a single-page app if routes are added later.
 
 ## GitHub Pages
 
