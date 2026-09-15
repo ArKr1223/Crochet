@@ -10,9 +10,12 @@
 ```env
 VITE_SUPABASE_URL=your-project-url
 VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+VITE_ALLOWED_EMAIL=your-email@example.com
 ```
 
-The app uses Supabase Auth. When these environment variables exist, users must sign in before reading or writing yarns, patterns, and projects. Row Level Security in `supabase/schema.sql` keeps each user's rows private.
+The app uses Supabase Auth. When these environment variables exist, users must sign in before reading or writing yarns, patterns, projects, and images. The UI only allows `VITE_ALLOWED_EMAIL` to sign in. Row Level Security in `supabase/schema.sql` also restricts database rows and private Storage objects to `fitz.astra@gmail.com`.
+
+Photos are compressed in the browser before upload, stored in the private `craft-images` Supabase Storage bucket, and referenced from the database by Storage path. The bucket is configured by `supabase/schema.sql` with a 1 MB file limit for compressed images.
 
 ## Vercel
 
@@ -22,6 +25,7 @@ The app uses Supabase Auth. When these environment variables exist, users must s
 4. Add Environment Variables for Production, Preview, and Development:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
+   - `VITE_ALLOWED_EMAIL`
 5. Deploy.
 
 Vercel builds with `npm run build` and serves the `dist` folder. `vercel.json` includes a rewrite to `index.html` so the app behaves like a single-page app if routes are added later.

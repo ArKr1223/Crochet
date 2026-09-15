@@ -34,6 +34,7 @@ import {
   updatePatternImage,
   updateProjectImage,
   updateYarnImage,
+  uploadCraftImage,
 } from './lib/craftRepository'
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient'
 
@@ -51,6 +52,10 @@ const entityCopy = {
   projects: { title: '專案', unit: '個', add: '新增專案', search: '搜尋專案名稱、狀態、目前進度' },
 }
 
+const allowedEmail = import.meta.env.VITE_ALLOWED_EMAIL?.trim().toLowerCase() ?? ''
+const imageCompressionTarget = 800 * 1024
+const imageCompressionMinQuality = 0.62
+
 const fileToDataUrl = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -58,6 +63,54 @@ const fileToDataUrl = (file) =>
     reader.onerror = reject
     reader.readAsDataURL(file)
   })
+
+const blobToDataUrl = fileToDataUrl
+
+async function compressImageFile(file) {
+  if (!file.type.startsWith('image/')) return file
+
+  const image = new Image()
+  const objectUrl = URL.createObjectURL(file)
+
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = resolve
+      image.onerror = reject
+      image.src = objectUrl
+    })
+
+    const scale = Math.min(1, 1600 / Math.max(image.width, image.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.width * scale))
+    canvas.height = Math.max(1, Math.round(image.height * scale))
+
+    const context = canvas.getContext('2d')
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    let quality = 0.82
+    let blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, 'image/webp', quality),
+    )
+
+    while (blob?.size > imageCompressionTarget && quality > imageCompressionMinQuality) {
+      quality -= 0.08
+      blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, 'image/webp', quality),
+      )
+    }
+
+    if (!blob) return file
+
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, '')}.webp`, {
+      type: 'image/webp',
+    })
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+const isAllowedEmail = (email = '') =>
+  !allowedEmail || email.trim().toLowerCase() === allowedEmail
 
 const fallbackImage = (label = 'Photo', color = '#8aa694') =>
   `data:image/svg+xml;utf8,${encodeURIComponent(`
@@ -91,7 +144,6 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState(seedProjects[0].id)
   const [lightboxImage, setLightboxImage] = useState(null)
   const [user, setUser] = useState(null)
-  const [authMode, setAuthMode] = useState('sign-in')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
   const [authMessage, setAuthMessage] = useState('')
@@ -111,12 +163,24 @@ function App() {
         setAuthMessage(error.message)
         return
       }
+      if (data.user && !isAllowedEmail(data.user.email)) {
+        supabase.auth.signOut()
+        setAuthMessage(`此網站只允許 ${allowedEmail} 登入。`)
+        return
+      }
       setUser(data.user ?? null)
     })
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user && !isAllowedEmail(session.user.email)) {
+        supabase.auth.signOut()
+        setUser(null)
+        setAuthMessage(`此網站只允許 ${allowedEmail} 登入。`)
+        setDataStatus('等待登入')
+        return
+      }
       setUser(session?.user ?? null)
       setAuthMessage('')
       setDataStatus(session?.user ? '同步中...' : '等待登入')
@@ -238,17 +302,19 @@ function App() {
 
     setAuthMessage('處理中...')
     const credentials = { email: authEmail, password: authPassword }
-    const { error } =
-      authMode === 'sign-up'
-        ? await supabase.auth.signUp(credentials)
-        : await supabase.auth.signInWithPassword(credentials)
+    if (!isAllowedEmail(authEmail)) {
+      setAuthMessage(`此網站只允許 ${allowedEmail} 登入。`)
+      return
+    }
+
+    const { error } = await supabase.auth.signInWithPassword(credentials)
 
     if (error) {
       setAuthMessage(error.message)
       return
     }
 
-    setAuthMessage(authMode === 'sign-up' ? '帳號已建立，請依設定完成驗證。' : '已登入。')
+    setAuthMessage('已登入。')
   }
 
   async function signOut() {
@@ -326,39 +392,56 @@ function App() {
   async function addEntity(values) {
     try {
       if (modalType === 'patterns') {
+        const patternId = isSupabaseConfigured && user ? crypto.randomUUID() : `pattern-${Date.now()}`
+        const uploadedImage =
+          isSupabaseConfigured && user && values.imageFile
+            ? await uploadCraftImage(values.imageFile, user.id, 'patterns', patternId)
+            : null
         const pattern = {
-          id: `pattern-${Date.now()}`,
+          id: patternId,
           name: values.name || '未命名織圖',
           category: values.category || '未分類',
           sourceType: 'photo',
           source: values.source || '本機匯入',
-          image: values.image || fallbackImage(values.name || 'Pattern', '#b96867'),
+          image: uploadedImage?.path ?? values.image ?? fallbackImage(values.name || 'Pattern', '#b96867'),
           yarnUsage: [],
         }
         const savedPattern =
           isSupabaseConfigured && user ? await createPattern(pattern, user.id) : pattern
+        if (uploadedImage) savedPattern.image = uploadedImage.url
         setPatterns((current) => [savedPattern, ...current])
         setSelectedPatternId(savedPattern.id)
         setActiveNav('patterns')
       } else if (modalType === 'projects') {
+        const projectId = isSupabaseConfigured && user ? crypto.randomUUID() : `project-${Date.now()}`
+        const uploadedImage =
+          isSupabaseConfigured && user && values.imageFile
+            ? await uploadCraftImage(values.imageFile, user.id, 'projects', projectId)
+            : null
         const project = {
-          id: `project-${Date.now()}`,
+          id: projectId,
           name: values.name || '未命名專案',
           patternId: values.patternId || patterns[0]?.id,
           status: values.status || '進行中',
           progress: Number(values.progress) || 0,
           currentStep: values.currentStep || '尚未新增進度',
-          image: values.image || fallbackImage(values.name || 'Project', '#517493'),
+          image: uploadedImage?.path ?? values.image ?? fallbackImage(values.name || 'Project', '#517493'),
           notes: values.notes || '',
         }
         const savedProject =
           isSupabaseConfigured && user ? await createProject(project, user.id) : project
+        if (uploadedImage) savedProject.image = uploadedImage.url
         setProjects((current) => [savedProject, ...current])
         setSelectedProjectId(savedProject.id)
         setActiveNav('projects')
       } else {
+        const yarnId = isSupabaseConfigured && user ? crypto.randomUUID() : `yarn-${Date.now()}`
+        const uploadedImage =
+          isSupabaseConfigured && user && values.imageFile
+            ? await uploadCraftImage(values.imageFile, user.id, 'yarns', yarnId)
+            : null
         const yarn = {
-          id: `yarn-${Date.now()}`,
+          id: yarnId,
           name: values.name || '未命名線材',
           brand: values.brand || '未分類',
           color: values.color || '未設定',
@@ -371,11 +454,12 @@ function App() {
           purchasePlace: values.purchasePlace || '未設定',
           notes: values.notes || '尚未新增備註。',
           storage: values.storage || '未設定',
-          image: values.image || fallbackImage(values.name || 'Yarn', values.colorHex),
+          image: uploadedImage?.path ?? values.image ?? fallbackImage(values.name || 'Yarn', values.colorHex),
           linkedPatternIds: [],
         }
         const savedYarn =
           isSupabaseConfigured && user ? await createYarn(yarn, user.id) : yarn
+        if (uploadedImage) savedYarn.image = uploadedImage.url
         setYarns((current) => [savedYarn, ...current])
         setSelectedYarnId(savedYarn.id)
         setActiveNav('yarns')
@@ -390,30 +474,46 @@ function App() {
   async function importPhoto(event) {
     const file = event.target.files?.[0]
     if (!file) return
-    const image = await fileToDataUrl(file)
+    const imageFile = await compressImageFile(file)
+    const image = await blobToDataUrl(imageFile)
 
     if (entityType === 'patterns') {
       if (!selectedPatternId) return
-      if (isSupabaseConfigured && user) await updatePatternImage(selectedPatternId, image)
+      const uploadedImage =
+        isSupabaseConfigured && user
+          ? await uploadCraftImage(imageFile, user.id, 'patterns', selectedPatternId)
+          : null
+      const nextImage =
+        uploadedImage && user ? await updatePatternImage(selectedPatternId, uploadedImage.path) : image
       setPatterns((current) =>
         current.map((pattern) =>
-          pattern.id === selectedPatternId ? { ...pattern, image } : pattern,
+          pattern.id === selectedPatternId ? { ...pattern, image: nextImage } : pattern,
         ),
       )
     } else if (entityType === 'projects') {
       if (!selectedProjectId) return
-      if (isSupabaseConfigured && user) await updateProjectImage(selectedProjectId, image)
+      const uploadedImage =
+        isSupabaseConfigured && user
+          ? await uploadCraftImage(imageFile, user.id, 'projects', selectedProjectId)
+          : null
+      const nextImage =
+        uploadedImage && user ? await updateProjectImage(selectedProjectId, uploadedImage.path) : image
       setProjects((current) =>
         current.map((project) =>
-          project.id === selectedProjectId ? { ...project, image } : project,
+          project.id === selectedProjectId ? { ...project, image: nextImage } : project,
         ),
       )
     } else {
       if (!selectedYarnId) return
-      if (isSupabaseConfigured && user) await updateYarnImage(selectedYarnId, image)
+      const uploadedImage =
+        isSupabaseConfigured && user
+          ? await uploadCraftImage(imageFile, user.id, 'yarns', selectedYarnId)
+          : null
+      const nextImage =
+        uploadedImage && user ? await updateYarnImage(selectedYarnId, uploadedImage.path) : image
       setYarns((current) =>
         current.map((yarn) =>
-          yarn.id === selectedYarnId ? { ...yarn, image } : yarn,
+          yarn.id === selectedYarnId ? { ...yarn, image: nextImage } : yarn,
         ),
       )
     }
@@ -426,9 +526,7 @@ function App() {
       <AuthPage
         authEmail={authEmail}
         authMessage={authMessage}
-        authMode={authMode}
         authPassword={authPassword}
-        onAuthModeChange={setAuthMode}
         onEmailChange={setAuthEmail}
         onPasswordChange={setAuthPassword}
         onSubmit={handleAuthSubmit}
@@ -630,15 +728,11 @@ function App() {
 function AuthPage({
   authEmail,
   authMessage,
-  authMode,
   authPassword,
-  onAuthModeChange,
   onEmailChange,
   onPasswordChange,
   onSubmit,
 }) {
-  const isSignUp = authMode === 'sign-up'
-
   return (
     <main className="auth-page">
       <form className="auth-card" onSubmit={onSubmit}>
@@ -652,8 +746,10 @@ function AuthPage({
           </div>
         </div>
         <div>
-          <h1>{isSignUp ? '建立帳號' : '登入'}</h1>
-          <p>登入後資料會依帳號儲存在 Supabase。</p>
+          <h1>登入</h1>
+          <p>
+            僅允許 {allowedEmail || '指定帳號'} 登入；資料會依帳號儲存在 Supabase。
+          </p>
         </div>
         <Field label="Email" type="email" value={authEmail} onChange={onEmailChange} />
         <Field
@@ -664,14 +760,7 @@ function AuthPage({
         />
         {authMessage && <p className="auth-message">{authMessage}</p>}
         <button className="primary-button" type="submit">
-          {isSignUp ? '建立帳號' : '登入'}
-        </button>
-        <button
-          className="text-button auth-switch"
-          onClick={() => onAuthModeChange(isSignUp ? 'sign-in' : 'sign-up')}
-          type="button"
-        >
-          {isSignUp ? '已有帳號，改為登入' : '沒有帳號，建立一個'}
+          登入
         </button>
       </form>
     </main>
@@ -1343,8 +1432,9 @@ function EntityModal({ onClose, onSubmit, patterns, type }) {
   async function handleFile(event) {
     const file = event.target.files?.[0]
     if (!file) return
-    const image = await fileToDataUrl(file)
-    setForm((current) => ({ ...current, image }))
+    const imageFile = await compressImageFile(file)
+    const image = await blobToDataUrl(imageFile)
+    setForm((current) => ({ ...current, image, imageFile }))
   }
 
   function updateField(field, value) {

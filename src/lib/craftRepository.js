@@ -1,5 +1,23 @@
 import { supabase } from './supabaseClient'
 
+const IMAGE_BUCKET = 'craft-images'
+const SIGNED_IMAGE_SECONDS = 60 * 60 * 24
+
+const isExternalImage = (value = '') =>
+  value.startsWith('data:') || value.startsWith('http://') || value.startsWith('https://')
+
+async function imageUrlFromPath(path) {
+  if (!path || isExternalImage(path)) return path ?? ''
+
+  const { data, error } = await requireSupabase()
+    .storage
+    .from(IMAGE_BUCKET)
+    .createSignedUrl(path, SIGNED_IMAGE_SECONDS)
+
+  if (error) throw error
+  return data.signedUrl
+}
+
 const yarnFromRow = (row) => ({
   id: row.id,
   name: row.name,
@@ -19,6 +37,7 @@ const yarnFromRow = (row) => ({
 })
 
 const yarnToRow = (yarn, userId) => ({
+  id: yarn.id,
   user_id: userId,
   name: yarn.name,
   brand: yarn.brand,
@@ -49,6 +68,7 @@ const patternFromRow = (row, links) => ({
 })
 
 const patternToRow = (pattern, userId) => ({
+  id: pattern.id,
   user_id: userId,
   name: pattern.name,
   category: pattern.category,
@@ -70,6 +90,7 @@ const projectFromRow = (row) => ({
 })
 
 const projectToRow = (project, userId) => ({
+  id: project.id,
   user_id: userId,
   pattern_id: project.patternId,
   name: project.name,
@@ -83,6 +104,49 @@ const projectToRow = (project, userId) => ({
 const requireSupabase = () => {
   if (!supabase) throw new Error('Supabase is not configured')
   return supabase
+}
+
+async function yarnFromRowWithImage(row) {
+  return {
+    ...yarnFromRow(row),
+    image: await imageUrlFromPath(row.image_url),
+    imagePath: row.image_url ?? '',
+  }
+}
+
+async function patternFromRowWithImage(row, links) {
+  return {
+    ...patternFromRow(row, links),
+    image: await imageUrlFromPath(row.image_url),
+    imagePath: row.image_url ?? '',
+  }
+}
+
+async function projectFromRowWithImage(row) {
+  return {
+    ...projectFromRow(row),
+    image: await imageUrlFromPath(row.image_url),
+    imagePath: row.image_url ?? '',
+  }
+}
+
+export async function uploadCraftImage(file, userId, entityType, entityId) {
+  const extension = file.type === 'image/png' ? 'png' : 'webp'
+  const path = `${userId}/${entityType}/${entityId}-${Date.now()}.${extension}`
+  const { error } = await requireSupabase()
+    .storage
+    .from(IMAGE_BUCKET)
+    .upload(path, file, {
+      cacheControl: '31536000',
+      contentType: file.type || 'image/webp',
+      upsert: true,
+    })
+
+  if (error) throw error
+  return {
+    path,
+    url: await imageUrlFromPath(path),
+  }
 }
 
 export async function loadCraftData() {
@@ -99,14 +163,16 @@ export async function loadCraftData() {
   if (error) throw error
 
   const links = linkRows ?? []
-  const patterns = (patternRows ?? []).map((row) => patternFromRow(row, links))
-  const yarns = (yarnRows ?? []).map((row) => ({
-    ...yarnFromRow(row),
+  const patterns = await Promise.all(
+    (patternRows ?? []).map((row) => patternFromRowWithImage(row, links)),
+  )
+  const yarns = await Promise.all((yarnRows ?? []).map(async (row) => ({
+    ...(await yarnFromRowWithImage(row)),
     linkedPatternIds: links
       .filter((link) => link.yarn_id === row.id)
       .map((link) => link.pattern_id),
-  }))
-  const projects = (projectRows ?? []).map(projectFromRow)
+  })))
+  const projects = await Promise.all((projectRows ?? []).map(projectFromRowWithImage))
 
   return { yarns, patterns, projects }
 }
@@ -118,7 +184,7 @@ export async function createYarn(yarn, userId) {
     .select()
     .single()
   if (error) throw error
-  return yarnFromRow(data)
+  return yarnFromRowWithImage(data)
 }
 
 export async function createPattern(pattern, userId) {
@@ -128,7 +194,7 @@ export async function createPattern(pattern, userId) {
     .select()
     .single()
   if (error) throw error
-  return patternFromRow(data, [])
+  return patternFromRowWithImage(data, [])
 }
 
 export async function createProject(project, userId) {
@@ -138,31 +204,34 @@ export async function createProject(project, userId) {
     .select()
     .single()
   if (error) throw error
-  return projectFromRow(data)
+  return projectFromRowWithImage(data)
 }
 
-export async function updateYarnImage(yarnId, image) {
+export async function updateYarnImage(yarnId, imagePath) {
   const { error } = await requireSupabase()
     .from('yarns')
-    .update({ image_url: image })
+    .update({ image_url: imagePath })
     .eq('id', yarnId)
   if (error) throw error
+  return imageUrlFromPath(imagePath)
 }
 
-export async function updatePatternImage(patternId, image) {
+export async function updatePatternImage(patternId, imagePath) {
   const { error } = await requireSupabase()
     .from('patterns')
-    .update({ image_url: image })
+    .update({ image_url: imagePath })
     .eq('id', patternId)
   if (error) throw error
+  return imageUrlFromPath(imagePath)
 }
 
-export async function updateProjectImage(projectId, image) {
+export async function updateProjectImage(projectId, imagePath) {
   const { error } = await requireSupabase()
     .from('projects')
-    .update({ image_url: image })
+    .update({ image_url: imagePath })
     .eq('id', projectId)
   if (error) throw error
+  return imageUrlFromPath(imagePath)
 }
 
 export async function deleteYarnById(yarnId) {
