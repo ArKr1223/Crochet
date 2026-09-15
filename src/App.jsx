@@ -8,6 +8,7 @@ import {
   Home,
   ImagePlus,
   List,
+  LoaderCircle,
   MoreHorizontal,
   PackagePlus,
   Palette,
@@ -137,14 +138,18 @@ function App() {
   const [viewMode, setViewMode] = useState('list')
   const [listWidth, setListWidth] = useState(380)
   const [modalType, setModalType] = useState(null)
-  const [yarns, setYarns] = useState(seedYarns)
-  const [patterns, setPatterns] = useState(seedPatterns)
-  const [projects, setProjects] = useState(seedProjects)
-  const [selectedYarnId, setSelectedYarnId] = useState(seedYarns[0].id)
-  const [selectedPatternId, setSelectedPatternId] = useState(seedPatterns[0].id)
-  const [selectedProjectId, setSelectedProjectId] = useState(seedProjects[0].id)
+  const [yarns, setYarns] = useState(isSupabaseConfigured ? [] : seedYarns)
+  const [patterns, setPatterns] = useState(isSupabaseConfigured ? [] : seedPatterns)
+  const [projects, setProjects] = useState(isSupabaseConfigured ? [] : seedProjects)
+  const [selectedYarnId, setSelectedYarnId] = useState(null)
+  const [selectedPatternId, setSelectedPatternId] = useState(null)
+  const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [lightboxImage, setLightboxImage] = useState(null)
   const [user, setUser] = useState(null)
+  const userId = user?.id
+  const [loadedUserId, setLoadedUserId] = useState(null)
+  const [loadError, setLoadError] = useState('')
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
   const [authMessage, setAuthMessage] = useState('')
@@ -183,6 +188,16 @@ function App() {
         return
       }
       setUser(session?.user ?? null)
+      if (!session?.user) {
+        setLoadedUserId(null)
+        setLoadError('')
+        setYarns([])
+        setPatterns([])
+        setProjects([])
+        setSelectedYarnId(null)
+        setSelectedPatternId(null)
+        setSelectedProjectId(null)
+      }
       setAuthMessage('')
       setDataStatus(session?.user ? '同步中...' : '等待登入')
     })
@@ -194,7 +209,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!isSupabaseConfigured || !user) return
+    if (!isSupabaseConfigured || !userId) return
 
     let mounted = true
 
@@ -204,20 +219,20 @@ function App() {
         setYarns(data.yarns)
         setPatterns(data.patterns)
         setProjects(data.projects)
-        setSelectedYarnId(data.yarns[0]?.id ?? null)
-        setSelectedPatternId(data.patterns[0]?.id ?? null)
-        setSelectedProjectId(data.projects[0]?.id ?? null)
+        setLoadedUserId(userId)
+        setLoadError('')
         setDataStatus('已連接 Supabase')
       })
       .catch((error) => {
         if (!mounted) return
+        setLoadError(error.message)
         setDataStatus(`資料同步失敗：${error.message}`)
       })
 
     return () => {
       mounted = false
     }
-  }, [user])
+  }, [userId, loadAttempt])
 
   const entityType =
     activeNav === 'patterns' || activeNav === 'projects' ? activeNav : 'yarns'
@@ -276,6 +291,9 @@ function App() {
   function changeNav(id) {
     setActiveNav(id)
     setQuery('')
+    setSelectedYarnId(null)
+    setSelectedPatternId(null)
+    setSelectedProjectId(null)
   }
 
   function openYarn(yarnId) {
@@ -322,12 +340,13 @@ function App() {
     if (!supabase) return
     await supabase.auth.signOut()
     setUser(null)
-    setYarns(seedYarns)
-    setPatterns(seedPatterns)
-    setProjects(seedProjects)
-    setSelectedYarnId(seedYarns[0].id)
-    setSelectedPatternId(seedPatterns[0].id)
-    setSelectedProjectId(seedProjects[0].id)
+    setLoadedUserId(null)
+    setYarns([])
+    setPatterns([])
+    setProjects([])
+    setSelectedYarnId(null)
+    setSelectedPatternId(null)
+    setSelectedProjectId(null)
     setDataStatus('等待登入')
   }
 
@@ -539,6 +558,28 @@ function App() {
     return <MissingConfigPage />
   }
 
+  if (isSupabaseConfigured && loadedUserId !== userId) {
+    return (
+      <main className="auth-page">
+        <section className="auth-card loading-card" aria-busy={!loadError}>
+          <h1>毛毛庫</h1>
+          {loadError ? (
+            <>
+              <p role="alert">資料載入失敗：{loadError}</p>
+              <button className="primary-button" onClick={() => {
+                setLoadError('')
+                setLoadAttempt((attempt) => attempt + 1)
+              }} type="button">重試</button>
+              <button className="text-button" onClick={signOut} type="button">登出</button>
+            </>
+          ) : (
+            <p role="status"><LoaderCircle className="loading-spinner" size={22} />載入中…</p>
+          )}
+        </section>
+      </main>
+    )
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="主選單">
@@ -559,6 +600,8 @@ function App() {
               <button
                 className={activeNav === item.id ? 'nav-item active' : 'nav-item'}
                 key={item.id}
+                aria-label={item.label}
+                aria-current={activeNav === item.id ? 'page' : undefined}
                 onClick={() => changeNav(item.id)}
                 type="button"
               >
@@ -893,6 +936,7 @@ function YarnsView({
       style={{ '--list-width': `${listWidth}px` }}
     >
       <div className="catalog-list">
+        {yarns.length === 0 && <p className="empty-state">沒有符合的線材</p>}
         {viewMode === 'list' ? (
           <YarnTable
             patterns={patterns}
@@ -940,6 +984,7 @@ function PatternsView({
       style={{ '--list-width': `${listWidth}px` }}
     >
       <div className="catalog-list card-list">
+        {patterns.length === 0 && <p className="empty-state">沒有符合的織圖</p>}
         {patterns.map((pattern) => (
           <button
             className={selectedPatternId === pattern.id ? 'entity-card active' : 'entity-card'}
@@ -986,6 +1031,7 @@ function ProjectsView({
       style={{ '--list-width': `${listWidth}px` }}
     >
       <div className="catalog-list project-card-list">
+        {projects.length === 0 && <p className="empty-state">沒有符合的專案</p>}
         <ProjectCards
           onSelect={setSelectedProjectId}
           projects={projects}
@@ -1053,13 +1099,16 @@ function YarnTable({ patterns, selectedYarnId, setSelectedYarnId, yarns }) {
               onClick={() => setSelectedYarnId(yarn.id)}
             >
               <td>
-                <div className="name-cell">
+                <button className="name-cell yarn-name-button" type="button" onClick={(event) => {
+                  event.stopPropagation()
+                  setSelectedYarnId(yarn.id)
+                }}>
                   <img alt="" src={yarn.image} />
                   <div>
                     <strong>{yarn.name}</strong>
                     <span>{yarn.brand}</span>
                   </div>
-                </div>
+                </button>
               </td>
               <td>
                 <span className="color-cell">
