@@ -1066,6 +1066,8 @@ button:disabled { cursor: wait; opacity: 0.6; }
 }
 
 .relationship-option:last-child { border-bottom: 0; }
+.relationship-option:not(:has(> input)) { grid-template-columns: minmax(0, 1fr); }
+.relationship-picker h3 small { margin-left: 8px; color: var(--muted); font-weight: 400; }
 .relationship-option.selected { background: #eef5f1; }
 .relationship-option label { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
 .relationship-option label input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--sage); }

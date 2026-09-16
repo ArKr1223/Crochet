@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient'
 import { IMAGE_MAX_BYTES } from './imageCompression'
+import { readProjectYarns, writeProjectYarns, describeProjectYarns } from './projectYarns'
 
 const IMAGE_BUCKET = 'craft-images'
 const SIGNED_IMAGE_SECONDS = 60 * 60 * 24
@@ -77,14 +78,17 @@ const patternToRow = (pattern, userId) => ({
   notes: pattern.notes,
 })
 
-const projectFromRow = (row) => ({
+const projectFromRow = (row) => {
+  const selection = readProjectYarns(row.yarn_description ?? '')
+  return ({
   id: row.id,
   name: row.name,
   patternId: row.pattern_id,
   startDate: row.start_date ?? '',
   endDate: row.end_date ?? '',
   workType: row.work_type ?? '',
-  yarnDescription: row.yarn_description ?? '',
+  ...selection,
+  yarnDescription: describeProjectYarns(selection.yarnLinks, selection.yarnNote),
   toolType: row.tool_type ?? '',
   hookSize: row.hook_size ?? '',
   status: row.status ?? '進行中',
@@ -94,6 +98,8 @@ const projectFromRow = (row) => ({
   notes: row.notes ?? '',
 })
 
+}
+
 const projectToRow = (project, userId) => ({
   id: project.id,
   user_id: userId,
@@ -101,7 +107,7 @@ const projectToRow = (project, userId) => ({
   start_date: project.startDate || null,
   end_date: project.endDate || null,
   work_type: project.workType || '',
-  yarn_description: project.yarnDescription || '',
+  yarn_description: writeProjectYarns(project),
   tool_type: project.toolType || null,
   hook_size: project.hookSize || '',
   name: project.name,

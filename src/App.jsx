@@ -45,6 +45,7 @@ import {
 } from './lib/craftRepository'
 import { compressImageFile } from './lib/imageCompression'
 import { formatYarnUnit, yarnNumber } from './lib/yarnUnits'
+import { describeProjectYarns } from './lib/projectYarns'
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient'
 
 const navigation = [
@@ -437,7 +438,9 @@ function App() {
           startDate: values.startDate || '',
           endDate: values.endDate || '',
           workType: values.workType || '',
-          yarnDescription: values.yarnDescription || '',
+          yarnLinks: values.yarnLinks ?? [],
+          yarnNote: values.yarnNote || '',
+          yarnDescription: describeProjectYarns(values.yarnLinks ?? [], values.yarnNote),
           toolType: values.toolType || '',
           hookSize: values.hookSize || '',
           image: uploadedImage?.path ?? editingEntity?.imagePath ?? (values.image || fallbackImage(values.name || 'Project', '#517493')),
@@ -1526,6 +1529,8 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
     linkedPatternIds: [],
     yarnUsage: [],
     ...initialValues,
+    yarnLinks: initialValues?.yarnLinks ?? [],
+    yarnNote: initialValues?.yarnNote ?? initialValues?.yarnDescription ?? '',
     weight: yarnNumber(initialValues?.weight, 'g'),
     price: yarnNumber(initialValues?.price, '元'),
     imageFile: null,
@@ -1581,6 +1586,16 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
       yarnUsage: current.yarnUsage.some((usage) => usage.yarnId === yarnId)
         ? current.yarnUsage.filter((usage) => usage.yarnId !== yarnId)
         : [...current.yarnUsage, { yarnId, amount: '' }],
+    }))
+  }
+
+  function toggleProjectYarn(yarnId) {
+    const yarn = yarns.find((item) => item.id === yarnId)
+    setForm((current) => ({
+      ...current,
+      yarnLinks: current.yarnLinks.some((item) => item.id === yarnId)
+        ? current.yarnLinks.filter((item) => item.id !== yarnId)
+        : [...current.yarnLinks, { id: yarnId, name: yarn.name }],
     }))
   }
 
@@ -1679,8 +1694,14 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
             <>
               <Field label="開始日期" type="date" value={form.startDate ?? ''} onChange={(value) => updateField('startDate', value)} />
               <Field label="作品類型" value={form.workType ?? ''} onChange={(value) => updateField('workType', value)} />
-              <Field label="毛線" list="project-yarn-names" value={form.yarnDescription ?? ''} onChange={(value) => updateField('yarnDescription', value)} />
-              <datalist id="project-yarn-names">{yarns.map((yarn) => <option key={yarn.id} value={yarn.name} />)}</datalist>
+              <RelationshipPicker
+                emptyText="目前沒有可選擇的線材"
+                items={[...yarns, ...form.yarnLinks.filter((link) => !yarns.some((yarn) => yarn.id === link.id))]}
+                label="專案線材"
+                onToggle={toggleProjectYarn}
+                selectedIds={form.yarnLinks.map((item) => item.id)}
+              />
+              <Field label="線材備註" value={form.yarnNote} onChange={(value) => updateField('yarnNote', value)} />
               <label className="field">
                 <span>棒針/鉤針</span>
                 <select aria-label="棒針/鉤針" value={form.toolType ?? ''} onChange={(event) => updateField('toolType', event.target.value)}>
@@ -1729,18 +1750,26 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
 }
 
 function RelationshipPicker({ amounts, emptyText, items, label, onAmountChange, onToggle, selectedIds }) {
+  const [search, setSearch] = useState('')
+  const normalizedSearch = search.trim().toLowerCase()
+  const matches = items.filter((item) => [item.name, item.brand, item.color, item.material, item.category]
+    .filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch))
   return (
     <section className="relationship-picker" aria-label={label}>
-      <h3>{label}</h3>
+      <h3>{label} <small>已選 {selectedIds.length} 項</small></h3>
+      <label className="field">
+        <input aria-label={`搜尋${label}`} type="search" placeholder={`搜尋${label}`} value={search} onChange={(event) => setSearch(event.target.value)} />
+      </label>
       {items.length === 0 ? <p>{emptyText}</p> : (
         <div className="relationship-options">
-          {items.map((item) => {
+          {matches.length === 0 && <p className="empty-state">沒有符合的項目</p>}
+          {matches.map((item) => {
             const selected = selectedIds.includes(item.id)
             return (
               <div className={selected ? 'relationship-option selected' : 'relationship-option'} key={item.id}>
                 <label>
                   <input checked={selected} onChange={() => onToggle(item.id)} type="checkbox" />
-                  <img alt="" src={item.image} />
+                  {item.image && <img alt="" src={item.image} />}
                   <span>{item.name}</span>
                 </label>
                 {selected && onAmountChange && (
