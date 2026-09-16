@@ -40,8 +40,11 @@ import {
   updateYarn,
   updatePattern,
   updateProject,
+  syncPatternsForYarn,
+  syncYarnsForPattern,
 } from './lib/craftRepository'
 import { compressImageFile } from './lib/imageCompression'
+import { formatYarnUnit, yarnNumber } from './lib/yarnUnits'
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient'
 
 const navigation = [
@@ -219,15 +222,15 @@ function App() {
           .toLowerCase()
           .includes(normalizedQuery)
       const matchesMaterial =
-        materialFilter === '全部材質' || extractMaterials(yarn.material).includes(materialFilter)
+        activeNav === 'overview' || materialFilter === '全部材質' || extractMaterials(yarn.material).includes(materialFilter)
       return matchesQuery && matchesMaterial
     })
-  }, [materialFilter, query, yarns])
+  }, [activeNav, materialFilter, query, yarns])
 
   const filteredPatterns = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return patterns.filter((pattern) =>
-      [pattern.name, pattern.category, pattern.sourceType, pattern.source]
+      [pattern.name, pattern.category, pattern.sourceType, pattern.source, pattern.notes]
         .join(' ')
         .toLowerCase()
         .includes(normalizedQuery),
@@ -237,7 +240,7 @@ function App() {
   const filteredProjects = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return projects.filter((project) =>
-      [project.name, project.status, project.currentStep]
+      [project.name, project.status, project.currentStep, project.workType, project.yarnDescription, project.toolType, project.hookSize, project.notes]
         .join(' ')
         .toLowerCase()
         .includes(normalizedQuery),
@@ -259,6 +262,7 @@ function App() {
   }
 
   function openYarn(yarnId) {
+    setMaterialFilter('全部材質')
     setSelectedYarnId(yarnId)
     setActiveNav('yarns')
     setQuery('')
@@ -267,6 +271,12 @@ function App() {
   function openPattern(patternId) {
     setSelectedPatternId(patternId)
     setActiveNav('patterns')
+    setQuery('')
+  }
+
+  function openProject(projectId) {
+    setSelectedProjectId(projectId)
+    setActiveNav('projects')
     setQuery('')
   }
 
@@ -389,12 +399,26 @@ function App() {
           ...(editingEntity ? values : {}),
           image: uploadedImage?.path ?? editingEntity?.imagePath ?? (values.image || fallbackImage(values.name || 'Pattern', '#b96867')),
           displayImage: uploadedImage?.url ?? values.image,
-          yarnUsage: editingEntity?.yarnUsage ?? [],
+          yarnUsage: values.yarnUsage ?? [],
         }
         const savedPattern =
           isSupabaseConfigured && user ? await (editingEntity ? updatePattern : createPattern)(pattern, user.id) : { ...pattern, image: pattern.displayImage || pattern.image }
         if (uploadedImage) savedPattern.image = uploadedImage.url
-        setPatterns((current) => editingEntity ? current.map((item) => item.id === savedPattern.id ? savedPattern : item) : [savedPattern, ...current])
+        if (isSupabaseConfigured && user) {
+          await syncYarnsForPattern(savedPattern.id, pattern.yarnUsage, user.id)
+          const data = await loadCraftData()
+          setYarns(data.yarns)
+          setPatterns(data.patterns)
+          setProjects(data.projects)
+        } else {
+          setPatterns((current) => editingEntity ? current.map((item) => item.id === savedPattern.id ? savedPattern : item) : [savedPattern, ...current])
+          setYarns((current) => current.map((yarn) => ({
+            ...yarn,
+            linkedPatternIds: pattern.yarnUsage.some((usage) => usage.yarnId === yarn.id)
+              ? [...new Set([...yarn.linkedPatternIds, savedPattern.id])]
+              : yarn.linkedPatternIds.filter((id) => id !== savedPattern.id),
+          })))
+        }
         setSelectedPatternId(savedPattern.id)
         setActiveNav('patterns')
       } else if (modalType === 'projects') {
@@ -440,7 +464,6 @@ function App() {
           colorHex: values.colorHex || '#8aa694',
           material: values.material || '未設定',
           weight: values.weight || '未設定',
-          yardage: values.yardage || '未設定',
           price: values.price || '未設定',
           purchasePlace: values.purchasePlace || '未設定',
           notes: values.notes || '尚未新增備註。',
@@ -449,20 +472,36 @@ function App() {
           quantity: Number(values.quantity),
           image: uploadedImage?.path ?? editingEntity?.imagePath ?? (values.image || fallbackImage(values.name || 'Yarn', values.colorHex)),
           displayImage: uploadedImage?.url ?? values.image,
-          linkedPatternIds: editingEntity?.linkedPatternIds ?? [],
+          linkedPatternIds: values.linkedPatternIds ?? [],
         }
         const savedYarn =
           isSupabaseConfigured && user ? await (editingEntity ? updateYarn : createYarn)(yarn, user.id) : { ...yarn, image: yarn.displayImage || yarn.image }
         if (uploadedImage) savedYarn.image = uploadedImage.url
-        setYarns((current) => editingEntity ? current.map((item) => item.id === savedYarn.id ? savedYarn : item) : [savedYarn, ...current])
+        if (isSupabaseConfigured && user) {
+          await syncPatternsForYarn(savedYarn.id, yarn.linkedPatternIds, user.id)
+          const data = await loadCraftData()
+          setYarns(data.yarns)
+          setPatterns(data.patterns)
+          setProjects(data.projects)
+        } else {
+          setYarns((current) => editingEntity ? current.map((item) => item.id === savedYarn.id ? savedYarn : item) : [savedYarn, ...current])
+          setPatterns((current) => current.map((pattern) => ({
+            ...pattern,
+            yarnUsage: yarn.linkedPatternIds.includes(pattern.id)
+              ? pattern.yarnUsage.some((usage) => usage.yarnId === savedYarn.id)
+                ? pattern.yarnUsage
+                : [...pattern.yarnUsage, { yarnId: savedYarn.id, amount: '' }]
+              : pattern.yarnUsage.filter((usage) => usage.yarnId !== savedYarn.id),
+          })))
+        }
         setSelectedYarnId(savedYarn.id)
         setActiveNav('yarns')
       }
-      setDataStatus(isSupabaseConfigured && user ? '已同步新增資料' : dataStatus)
+      setDataStatus(isSupabaseConfigured && user ? '已同步資料' : dataStatus)
       setModalType(null)
       setEditingEntity(null)
     } catch (error) {
-      setDataStatus(`新增失敗：${error.message}`)
+      setDataStatus(`儲存失敗：${error.message}`)
       throw error
     }
   }
@@ -615,6 +654,7 @@ function App() {
             <Search size={20} />
             <input
               aria-label="搜尋"
+              type="search"
               onChange={(event) => setQuery(event.target.value)}
               placeholder={
                 activeNav === 'overview'
@@ -644,6 +684,12 @@ function App() {
 
         {activeNav === 'overview' && (
           <OverviewPage
+            searchQuery={query}
+            searchGroups={[
+              { title: '線材', items: filteredYarns, onSelect: openYarn, meta: (item) => `${item.material} / ${item.quantity} 球` },
+              { title: '織圖', items: filteredPatterns, onSelect: openPattern, meta: (item) => item.category },
+              { title: '專案', items: filteredProjects, onSelect: openProject, meta: (item) => `${item.status} / ${item.progress}%` },
+            ]}
             onOpen={changeNav}
             patternCount={patterns.length}
             projectCount={activeProjects.length}
@@ -837,23 +883,28 @@ function AuthPage({
 }
 
 function OverviewPage({
+  searchQuery,
+  searchGroups,
   onOpen,
   patternCount,
   projectCount,
   totalSkeins,
 }) {
   const stats = [
-    { id: 'yarns', icon: Palette, label: '線材', value: totalSkeins, unit: '個' },
+    { id: 'yarns', icon: Palette, label: '線材', value: totalSkeins, unit: '球' },
     { id: 'patterns', icon: BookOpen, label: '織圖', value: patternCount, unit: '個' },
     { id: 'projects', icon: Gauge, label: '進行中專案', value: projectCount, unit: '個' },
   ]
+  const searching = Boolean(searchQuery.trim())
+  const resultCount = searchGroups.reduce((sum, group) => sum + group.items.length, 0)
 
   return (
     <section className="overview-page">
       <div className="page-title">
-        <h1>總覽</h1>
+        <h1>{searching ? '搜尋結果' : '總覽'}</h1>
+        {searching && <span role="status">共 {resultCount} 筆</span>}
       </div>
-      <div className="stats-row">
+      {!searching && <div className="stats-row">
         {stats.map((stat) => {
           const Icon = stat.icon
           return (
@@ -876,7 +927,25 @@ function OverviewPage({
             </button>
           )
         })}
-      </div>
+      </div>}
+
+      {searching && <div className="global-search-results">
+        {searchGroups.map((group) => (
+          <section className="search-group" key={group.title} aria-label={`${group.title}搜尋結果`}>
+            <h2>{group.title}<small>{group.items.length} 筆</small></h2>
+            {group.items.length === 0 ? <p className="empty-state">沒有符合的{group.title}</p> : (
+              <div className="search-result-list">
+                {group.items.map((item) => (
+                  <button className="search-result" key={item.id} type="button" aria-label={`開啟${group.title}：${item.name}`} onClick={() => group.onSelect(item.id)}>
+                    <img src={item.image} alt="" />
+                    <span><strong>{item.name}</strong><small>{group.meta(item)}</small></span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        ))}
+      </div>}
 
     </section>
   )
@@ -1126,8 +1195,8 @@ function YarnTable({ patterns, selectedYarnId, setSelectedYarnId, yarns }) {
                 </span>
               </td>
               <td>{yarn.material}</td>
-              <td>{yarn.weight}</td>
-              <td>{yarn.quantity}</td>
+              <td>{formatYarnUnit(yarn.weight, 'g')}</td>
+              <td>{yarn.quantity} 球</td>
               <td>
                 {patterns.filter((pattern) => yarn.linkedPatternIds.includes(pattern.id)).length} 個
               </td>
@@ -1152,7 +1221,7 @@ function YarnGrid({ selectedYarnId, setSelectedYarnId, yarns }) {
           <img alt="" src={yarn.image} />
           <strong>{yarn.name}</strong>
           <span>
-            {yarn.color} / {yarn.quantity} 線
+            {yarn.color} / {yarn.quantity} 球
           </span>
         </button>
       ))}
@@ -1213,11 +1282,9 @@ function YarnDetail({
           {selectedYarn.color}
         </Fact>
         <Fact label="材質">{selectedYarn.material}</Fact>
-        <Fact label="重量">
-          {selectedYarn.weight}（{selectedYarn.yardage}）
-        </Fact>
-        <Fact label="數量">{selectedYarn.quantity} 線</Fact>
-        <Fact label="價格">{selectedYarn.price ?? '未設定'}</Fact>
+        <Fact label="重量">{formatYarnUnit(selectedYarn.weight, 'g')}</Fact>
+        <Fact label="數量">{selectedYarn.quantity} 球</Fact>
+        <Fact label="價格">{formatYarnUnit(selectedYarn.price, '元')}</Fact>
         <Fact label="購買地點">{selectedYarn.purchasePlace ?? '未設定'}</Fact>
         <Fact label="存放位置">{selectedYarn.storage}</Fact>
       </dl>
@@ -1456,7 +1523,11 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
     progress: 0,
     sourceType: 'photo',
     status: '進行中',
+    linkedPatternIds: [],
+    yarnUsage: [],
     ...initialValues,
+    weight: yarnNumber(initialValues?.weight, 'g'),
+    price: yarnNumber(initialValues?.price, '元'),
     imageFile: null,
   })
   const [processingPhoto, setProcessingPhoto] = useState(false)
@@ -1493,6 +1564,33 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  function togglePattern(patternId) {
+    setForm((current) => ({
+      ...current,
+      linkedPatternIds: current.linkedPatternIds.includes(patternId)
+        ? current.linkedPatternIds.filter((id) => id !== patternId)
+        : [...current.linkedPatternIds, patternId],
+    }))
+  }
+
+  function toggleYarn(yarnId) {
+    setForm((current) => ({
+      ...current,
+      yarnUsage: current.yarnUsage.some((usage) => usage.yarnId === yarnId)
+        ? current.yarnUsage.filter((usage) => usage.yarnId !== yarnId)
+        : [...current.yarnUsage, { yarnId, amount: '' }],
+    }))
+  }
+
+  function updateYarnAmount(yarnId, amount) {
+    setForm((current) => ({
+      ...current,
+      yarnUsage: current.yarnUsage.map((usage) =>
+        usage.yarnId === yarnId ? { ...usage, amount } : usage,
+      ),
+    }))
   }
 
   async function handleSubmit(event) {
@@ -1548,18 +1646,33 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
                 />
               </label>
               <Field label="材質" value={form.material ?? ''} onChange={(value) => updateField('material', value)} />
-              <Field label="重量" value={form.weight ?? ''} onChange={(value) => updateField('weight', value)} />
-              <Field label="長度" value={form.yardage ?? ''} onChange={(value) => updateField('yardage', value)} />
-              <Field label="數量" type="number" min="0" step="1" required value={form.quantity} onChange={(value) => updateField('quantity', value)} />
-              <Field label="價格" value={form.price ?? ''} onChange={(value) => updateField('price', value)} />
+              <Field label="重量" unit="g" type="number" min="0" step="any" value={form.weight} onChange={(value) => updateField('weight', value)} />
+              <Field label="數量" unit="球" type="number" min="0" step="1" required value={form.quantity} onChange={(value) => updateField('quantity', value)} />
+              <Field label="價格" unit="元" type="number" min="0" step="any" value={form.price} onChange={(value) => updateField('price', value)} />
               <Field label="購買地點" value={form.purchasePlace ?? ''} onChange={(value) => updateField('purchasePlace', value)} />
               <Field label="存放位置" value={form.storage ?? ''} onChange={(value) => updateField('storage', value)} />
+              <RelationshipPicker
+                emptyText="目前沒有可選擇的織圖"
+                items={patterns}
+                label="連結織圖"
+                onToggle={togglePattern}
+                selectedIds={form.linkedPatternIds}
+              />
             </>
           )}
           {type === 'patterns' && (
             <>
               <Field label="類別" value={form.category ?? ''} onChange={(value) => updateField('category', value)} />
               <Field label="來源" value={form.source ?? ''} onChange={(value) => updateField('source', value)} />
+              <RelationshipPicker
+                amounts={new Map(form.yarnUsage.map((usage) => [usage.yarnId, usage.amount]))}
+                emptyText="目前沒有可選擇的線材"
+                items={yarns}
+                label="使用線材"
+                onAmountChange={updateYarnAmount}
+                onToggle={toggleYarn}
+                selectedIds={form.yarnUsage.map((usage) => usage.yarnId)}
+              />
             </>
           )}
           {type === 'projects' && (
@@ -1615,11 +1728,49 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
   )
 }
 
-function Field({ label, onChange, type = 'text', value, ...inputProps }) {
+function RelationshipPicker({ amounts, emptyText, items, label, onAmountChange, onToggle, selectedIds }) {
+  return (
+    <section className="relationship-picker" aria-label={label}>
+      <h3>{label}</h3>
+      {items.length === 0 ? <p>{emptyText}</p> : (
+        <div className="relationship-options">
+          {items.map((item) => {
+            const selected = selectedIds.includes(item.id)
+            return (
+              <div className={selected ? 'relationship-option selected' : 'relationship-option'} key={item.id}>
+                <label>
+                  <input checked={selected} onChange={() => onToggle(item.id)} type="checkbox" />
+                  <img alt="" src={item.image} />
+                  <span>{item.name}</span>
+                </label>
+                {selected && onAmountChange && (
+                  <input
+                    aria-label={`${item.name}用量`}
+                    onChange={(event) => onAmountChange(item.id, event.target.value)}
+                    placeholder="用量，例如 2 球"
+                    type="text"
+                    value={amounts.get(item.id) ?? ''}
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function Field({ label, onChange, type = 'text', value, unit, ...inputProps }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input {...inputProps} onChange={(event) => onChange(event.target.value)} type={type} value={value} />
+      {unit ? (
+        <div className="unit-input">
+          <input {...inputProps} aria-label={label} onChange={(event) => onChange(event.target.value)} type={type} value={value} />
+          <span aria-hidden="true">{unit}</span>
+        </div>
+      ) : <input {...inputProps} onChange={(event) => onChange(event.target.value)} type={type} value={value} />}
     </label>
   )
 }

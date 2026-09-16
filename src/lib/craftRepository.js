@@ -27,7 +27,6 @@ const yarnFromRow = (row) => ({
   colorHex: row.color_hex ?? '#8aa694',
   material: row.material ?? '',
   weight: row.weight ?? '',
-  yardage: row.yardage ?? '',
   quantity: row.quantity ?? 0,
   price: row.price ?? '',
   purchasePlace: row.purchase_place ?? '',
@@ -46,7 +45,6 @@ const yarnToRow = (yarn, userId) => ({
   color_hex: yarn.colorHex,
   material: yarn.material,
   weight: yarn.weight,
-  yardage: yarn.yardage,
   quantity: yarn.quantity,
   price: yarn.price,
   purchase_place: yarn.purchasePlace,
@@ -244,6 +242,91 @@ export async function updateProject(project, userId) {
     .eq('id', project.id).eq('user_id', userId).select().single()
   if (error) throw error
   return { ...projectFromRow(data), imagePath: data.image_url, image: project.displayImage ?? project.image }
+}
+
+async function syncPatternYarnLinks({ filterColumn, filterId, desiredLinks, userId }) {
+  const client = requireSupabase()
+  const { data: existingLinks, error: readError } = await client
+    .from('pattern_yarns')
+    .select('pattern_id, yarn_id, usage_amount')
+    .eq('user_id', userId)
+    .eq(filterColumn, filterId)
+
+  if (readError) throw readError
+
+  if (desiredLinks.length > 0) {
+    const { error: upsertError } = await client
+      .from('pattern_yarns')
+      .upsert(desiredLinks, { onConflict: 'pattern_id,yarn_id' })
+    if (upsertError) throw upsertError
+  }
+
+  const desiredKeys = new Set(
+    desiredLinks.map((link) => filterColumn === 'pattern_id' ? link.yarn_id : link.pattern_id),
+  )
+  const relationColumn = filterColumn === 'pattern_id' ? 'yarn_id' : 'pattern_id'
+  const removedIds = (existingLinks ?? [])
+    .map((link) => link[relationColumn])
+    .filter((id) => !desiredKeys.has(id))
+
+  if (removedIds.length > 0) {
+    const { error: deleteError } = await client
+      .from('pattern_yarns')
+      .delete()
+      .eq('user_id', userId)
+      .eq(filterColumn, filterId)
+      .in(relationColumn, removedIds)
+    if (deleteError) throw deleteError
+  }
+}
+
+export async function syncYarnsForPattern(patternId, yarnUsage, userId) {
+  const uniqueUsage = Array.from(
+    new Map(
+      (yarnUsage ?? [])
+        .filter((usage) => usage.yarnId)
+        .map((usage) => [usage.yarnId, usage]),
+    ).values(),
+  )
+
+  return syncPatternYarnLinks({
+    filterColumn: 'pattern_id',
+    filterId: patternId,
+    userId,
+    desiredLinks: uniqueUsage.map((usage) => ({
+      user_id: userId,
+      pattern_id: patternId,
+      yarn_id: usage.yarnId,
+      usage_amount: usage.amount?.trim() || null,
+    })),
+  })
+}
+
+export async function syncPatternsForYarn(yarnId, patternIds, userId) {
+  const client = requireSupabase()
+  const { data: existingLinks, error } = await client
+    .from('pattern_yarns')
+    .select('pattern_id, yarn_id, usage_amount')
+    .eq('user_id', userId)
+    .eq('yarn_id', yarnId)
+  if (error) throw error
+
+  const amountByPattern = new Map(
+    (existingLinks ?? []).map((link) => [link.pattern_id, link.usage_amount]),
+  )
+  const uniquePatternIds = [...new Set((patternIds ?? []).filter(Boolean))]
+
+  return syncPatternYarnLinks({
+    filterColumn: 'yarn_id',
+    filterId: yarnId,
+    userId,
+    desiredLinks: uniquePatternIds.map((patternId) => ({
+      user_id: userId,
+      pattern_id: patternId,
+      yarn_id: yarnId,
+      usage_amount: amountByPattern.get(patternId) ?? null,
+    })),
+  })
 }
 
 export async function updateYarnImage(yarnId, imagePath) {
