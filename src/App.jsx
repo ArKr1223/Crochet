@@ -361,14 +361,14 @@ function App() {
     setSelectedYarnId((current) => (current === yarnId ? null : current))
   }
 
-  async function toggleYarnUsed(yarn) {
+  async function toggleYarnUsed(yarn, nextUsed) {
     if (usageBusyRef.current) return
     usageBusyRef.current = true
     setSavingUsage(true)
     try {
       const isUsed = isSupabaseConfigured && user
-        ? await updateYarnUsed(yarn.id, !yarn.isUsed, user.id)
-        : !yarn.isUsed
+        ? await updateYarnUsed(yarn.id, nextUsed, user.id)
+        : nextUsed
       setYarns((current) => current.map((item) => item.id === yarn.id ? { ...item, isUsed } : item))
       if (usageFilter !== 'all' && isUsed !== (usageFilter === 'used')) setSelectedYarnId(null)
     } catch (error) {
@@ -1366,7 +1366,14 @@ function YarnDetail({
           {selectedYarn.color}
         </Fact>
         <Fact label="材質">{selectedYarn.material}</Fact>
-        <Fact label="使用狀態"><label className="usage-toggle"><input type="checkbox" role="switch" aria-label="已使用" checked={Boolean(selectedYarn.isUsed)} disabled={savingUsage} onChange={() => onToggleUsed(selectedYarn)} /><span>{selectedYarn.isUsed ? '已使用' : '未使用'}</span></label></Fact>
+        <Fact label="使用狀態">
+          <div className="field">
+            <select aria-label="使用狀態" value={selectedYarn.isUsed ? 'used' : 'unused'} disabled={savingUsage} onChange={(event) => onToggleUsed(selectedYarn, event.target.value === 'used')}>
+              <option value="unused">未使用</option>
+              <option value="used">已使用</option>
+            </select>
+          </div>
+        </Fact>
         <Fact label="重量">{formatYarnUnit(selectedYarn.weight, 'g')}</Fact>
         <Fact label="數量">{selectedYarn.quantity} 球</Fact>
         <Fact label="價格">{formatYarnUnit(selectedYarn.price, '元')}</Fact>
@@ -1744,7 +1751,13 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
                 />
               </label>
               <Field label="材質" value={form.material ?? ''} onChange={(value) => updateField('material', value)} />
-              <label className="usage-toggle"><input type="checkbox" role="switch" aria-label="已使用" checked={Boolean(form.isUsed)} onChange={(event) => updateField('isUsed', event.target.checked)} /><span>{form.isUsed ? '已使用' : '未使用'}</span></label>
+              <label className="field">
+                <span>使用狀態</span>
+                <select value={form.isUsed ? 'used' : 'unused'} onChange={(event) => updateField('isUsed', event.target.value === 'used')}>
+                  <option value="unused">未使用</option>
+                  <option value="used">已使用</option>
+                </select>
+              </label>
               <Field label="重量" unit="g" type="number" min="0" step="any" value={form.weight} onChange={(value) => updateField('weight', value)} />
               <Field label="數量" unit="球" type="number" min="0" step="1" required value={form.quantity} onChange={(value) => updateField('quantity', value)} />
               <Field label="價格" unit="元" type="number" min="0" step="any" value={form.price} onChange={(value) => updateField('price', value)} />
