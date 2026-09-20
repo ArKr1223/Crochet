@@ -1066,6 +1066,9 @@ button:disabled { cursor: wait; opacity: 0.6; }
 }
 
 .relationship-option:last-child { border-bottom: 0; }
+.project-tabs { display: flex; border-bottom: 1px solid var(--line-strong); }
+.project-tabs button { padding: 12px 16px; border: 0; border-bottom: 3px solid transparent; background: transparent; white-space: nowrap; color: var(--muted); }
+.project-tabs button[aria-selected='true'] { border-bottom-color: var(--sage); color: var(--sage); font-weight: 700; }
 .relationship-option:not(:has(> input)) { grid-template-columns: minmax(0, 1fr); }
 .relationship-picker h3 small { margin-left: 8px; color: var(--muted); font-weight: 400; }
 .relationship-option.selected { background: #eef5f1; }

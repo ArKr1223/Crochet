@@ -95,8 +95,11 @@ const extractMaterials = (material = '') =>
     .map((item) => item.trim())
     .filter(Boolean)
 
+const isProjectComplete = (project) => Number(project.progress) >= 100 || ['完成', '已完成'].includes(project.status)
+
 function App() {
   const [activeNav, setActiveNav] = useState('overview')
+  const [projectTab, setProjectTab] = useState('active')
   const [query, setQuery] = useState('')
   const [materialFilter, setMaterialFilter] = useState('全部材質')
   const [viewMode, setViewMode] = useState('list')
@@ -203,7 +206,7 @@ function App() {
   const entityType =
     activeNav === 'patterns' || activeNav === 'projects' ? activeNav : 'yarns'
   const totalSkeins = yarns.reduce((sum, yarn) => sum + yarn.quantity, 0)
-  const activeProjects = projects.filter((project) => project.status !== '完成')
+  const activeProjects = projects.filter((project) => !isProjectComplete(project))
 
   const materialFilters = useMemo(() => {
     const materials = new Set()
@@ -249,12 +252,14 @@ function App() {
   }, [projects, query])
 
   const selectedYarn = yarns.find((item) => item.id === selectedYarnId) ?? null
+  const visibleProjects = filteredProjects.filter((project) => isProjectComplete(project) === (projectTab === 'completed'))
   const selectedPattern =
     patterns.find((item) => item.id === selectedPatternId) ?? null
   const selectedProject =
     projects.find((item) => item.id === selectedProjectId) ?? null
 
   function changeNav(id) {
+    if (id === 'projects') setProjectTab('active')
     setActiveNav(id)
     setQuery('')
     setSelectedYarnId(null)
@@ -276,6 +281,8 @@ function App() {
   }
 
   function openProject(projectId) {
+    const project = projects.find((item) => item.id === projectId)
+    setProjectTab(project && isProjectComplete(project) ? 'completed' : 'active')
     setSelectedProjectId(projectId)
     setActiveNav('projects')
     setQuery('')
@@ -324,6 +331,8 @@ function App() {
   }
 
   async function deleteYarn(yarnId) {
+    const yarn = yarns.find((item) => item.id === yarnId)
+    if (!window.confirm(`確定要刪除線材「${yarn?.name ?? ''}」嗎？刪除後無法復原。`)) return
     if (isSupabaseConfigured && user) {
       try {
         await deleteYarnById(yarnId)
@@ -344,6 +353,8 @@ function App() {
   }
 
   async function deletePattern(patternId) {
+    const pattern = patterns.find((item) => item.id === patternId)
+    if (!window.confirm(`確定要刪除織圖「${pattern?.name ?? ''}」嗎？刪除後無法復原。`)) return
     if (isSupabaseConfigured && user) {
       try {
         await deletePatternById(patternId)
@@ -369,6 +380,8 @@ function App() {
   }
 
   async function deleteProject(projectId) {
+    const project = projects.find((item) => item.id === projectId)
+    if (!window.confirm(`確定要刪除專案「${project?.name ?? ''}」嗎？刪除後無法復原。`)) return
     if (isSupabaseConfigured && user) {
       try {
         await deleteProjectById(projectId)
@@ -432,7 +445,7 @@ function App() {
           id: projectId,
           name: values.name || '未命名專案',
           patternId: values.patternId || null,
-          status: values.status || '進行中',
+          status: Number(values.progress) >= 100 ? '已完成' : '進行中',
           progress: Number(values.progress) || 0,
           currentStep: values.currentStep || '尚未新增進度',
           startDate: values.startDate || '',
@@ -452,6 +465,7 @@ function App() {
         if (uploadedImage) savedProject.image = uploadedImage.url
         setProjects((current) => editingEntity ? current.map((item) => item.id === savedProject.id ? savedProject : item) : [savedProject, ...current])
         setSelectedProjectId(savedProject.id)
+        setProjectTab(isProjectComplete(savedProject) ? 'completed' : 'active')
         setActiveNav('projects')
       } else {
         const yarnId = editingEntity?.id ?? (isSupabaseConfigured && user ? crypto.randomUUID() : `yarn-${Date.now()}`)
@@ -761,15 +775,25 @@ function App() {
 
         {activeNav === 'projects' && (
           <EntityPage
-            count={filteredProjects.length}
+            count={visibleProjects.length}
             onImportClick={openImport}
             title="專案"
             unit="個"
+            extraToolbar={
+              <div className="project-tabs" role="tablist" aria-label="專案狀態">
+                {[['active', '進行中'], ['completed', '已完成']].map(([id, label]) => (
+                  <button key={id} type="button" role="tab" aria-selected={projectTab === id}
+                    onClick={() => { setProjectTab(id); setSelectedProjectId(null) }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            }
           >
             <ProjectsView
               onEdit={() => { setEditingEntity(selectedProject); setModalType('projects') }}
               patterns={patterns}
-              projects={filteredProjects}
+              projects={visibleProjects}
               onCloseDetail={() => setSelectedProjectId(null)}
               onDeleteProject={deleteProject}
               onResizeStart={updateListWidthFromClientX}
@@ -1724,7 +1748,7 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
                   ))}
                 </select>
               </label>
-              <Field label="狀態" value={form.status} onChange={(value) => updateField('status', value)} />
+              <div className="field"><span>狀態</span><output>{Number(form.progress) >= 100 ? '已完成' : '進行中'}</output></div>
               <Field label="進度" type="number" min="0" max="100" step="1" required value={form.progress} onChange={(value) => updateField('progress', value)} />
               <Field label="目前進度" value={form.currentStep ?? ''} onChange={(value) => updateField('currentStep', value)} />
             </>
