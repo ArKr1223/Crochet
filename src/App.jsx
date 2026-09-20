@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
+  CircleCheck,
   FileText,
   Folder,
   Gauge,
@@ -707,9 +708,13 @@ function App() {
               { title: '織圖', items: filteredPatterns, onSelect: openPattern, meta: (item) => item.category },
               { title: '專案', items: filteredProjects, onSelect: openProject, meta: (item) => `${item.status} / ${item.progress}%` },
             ]}
-            onOpen={changeNav}
+            onOpen={(id) => {
+              changeNav(id === 'completed' ? 'projects' : id)
+              if (id === 'completed') setProjectTab('completed')
+            }}
             patternCount={patterns.length}
             projectCount={activeProjects.length}
+            completedCount={projects.length - activeProjects.length}
             totalSkeins={totalSkeins}
           />
         )}
@@ -910,6 +915,7 @@ function AuthPage({
 }
 
 function OverviewPage({
+  completedCount,
   searchQuery,
   searchGroups,
   onOpen,
@@ -921,6 +927,7 @@ function OverviewPage({
     { id: 'yarns', icon: Palette, label: '線材', value: totalSkeins, unit: '球' },
     { id: 'patterns', icon: BookOpen, label: '織圖', value: patternCount, unit: '個' },
     { id: 'projects', icon: Gauge, label: '進行中專案', value: projectCount, unit: '個' },
+    { id: 'completed', icon: CircleCheck, label: '已完成作品', value: completedCount, unit: '個' },
   ]
   const searching = Boolean(searchQuery.trim())
   const resultCount = searchGroups.reduce((sum, group) => sum + group.items.length, 0)
