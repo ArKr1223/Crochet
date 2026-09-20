@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   CircleCheck,
+  Wallet,
   FileText,
   Folder,
   Gauge,
@@ -39,6 +40,7 @@ import {
   updateYarnImage,
   uploadCraftImage,
   updateYarn,
+  updateYarnUsed,
   updatePattern,
   updateProject,
   syncPatternsForYarn,
@@ -47,6 +49,7 @@ import {
 import { compressImageFile } from './lib/imageCompression'
 import { formatYarnUnit, yarnNumber } from './lib/yarnUnits'
 import { describeProjectYarns } from './lib/projectYarns'
+import { totalExpenses } from './lib/expenses'
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient'
 
 const navigation = [
@@ -103,6 +106,9 @@ function App() {
   const [projectTab, setProjectTab] = useState('active')
   const [query, setQuery] = useState('')
   const [materialFilter, setMaterialFilter] = useState('全部材質')
+  const [usageFilter, setUsageFilter] = useState('all')
+  const [savingUsage, setSavingUsage] = useState(false)
+  const usageBusyRef = useRef(false)
   const [viewMode, setViewMode] = useState('list')
   const [listWidth, setListWidth] = useState(380)
   const [modalType, setModalType] = useState(null)
@@ -228,9 +234,10 @@ function App() {
           .includes(normalizedQuery)
       const matchesMaterial =
         activeNav === 'overview' || materialFilter === '全部材質' || extractMaterials(yarn.material).includes(materialFilter)
-      return matchesQuery && matchesMaterial
+      const matchesUsage = activeNav === 'overview' || usageFilter === 'all' || Boolean(yarn.isUsed) === (usageFilter === 'used')
+      return matchesQuery && matchesMaterial && matchesUsage
     })
-  }, [activeNav, materialFilter, query, yarns])
+  }, [activeNav, materialFilter, usageFilter, query, yarns])
 
   const filteredPatterns = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -269,6 +276,7 @@ function App() {
   }
 
   function openYarn(yarnId) {
+    setUsageFilter('all')
     setMaterialFilter('全部材質')
     setSelectedYarnId(yarnId)
     setActiveNav('yarns')
@@ -353,6 +361,24 @@ function App() {
     setSelectedYarnId((current) => (current === yarnId ? null : current))
   }
 
+  async function toggleYarnUsed(yarn) {
+    if (usageBusyRef.current) return
+    usageBusyRef.current = true
+    setSavingUsage(true)
+    try {
+      const isUsed = isSupabaseConfigured && user
+        ? await updateYarnUsed(yarn.id, !yarn.isUsed, user.id)
+        : !yarn.isUsed
+      setYarns((current) => current.map((item) => item.id === yarn.id ? { ...item, isUsed } : item))
+      if (usageFilter !== 'all' && isUsed !== (usageFilter === 'used')) setSelectedYarnId(null)
+    } catch (error) {
+      setPhotoStatus(`使用狀態儲存失敗：${error.message}`)
+    } finally {
+      usageBusyRef.current = false
+      setSavingUsage(false)
+    }
+  }
+
   async function deletePattern(patternId) {
     const pattern = patterns.find((item) => item.id === patternId)
     if (!window.confirm(`確定要刪除織圖「${pattern?.name ?? ''}」嗎？刪除後無法復原。`)) return
@@ -407,6 +433,7 @@ function App() {
         const pattern = {
           id: patternId,
           name: values.name || '未命名織圖',
+          price: values.price ?? '',
           category: values.category || '未分類',
           sourceType: 'photo',
           source: values.source || '本機匯入',
@@ -483,6 +510,7 @@ function App() {
           material: values.material || '未設定',
           weight: values.weight || '未設定',
           price: values.price || '未設定',
+          isUsed: Boolean(values.isUsed),
           purchasePlace: values.purchasePlace || '未設定',
           notes: values.notes || '尚未新增備註。',
           storage: values.storage || '未設定',
@@ -513,6 +541,7 @@ function App() {
           })))
         }
         setSelectedYarnId(savedYarn.id)
+        setUsageFilter('all')
         setActiveNav('yarns')
       }
       setDataStatus(isSupabaseConfigured && user ? '已同步資料' : dataStatus)
@@ -716,6 +745,7 @@ function App() {
             projectCount={activeProjects.length}
             completedCount={projects.length - activeProjects.length}
             totalSkeins={totalSkeins}
+            totalSpent={totalExpenses(yarns, patterns)}
           />
         )}
 
@@ -725,6 +755,11 @@ function App() {
             extraToolbar={
               <>
                 <SegmentedControl value={viewMode} onChange={setViewMode} />
+                <label className="select-like">
+                  <select aria-label="線材使用狀態篩選" value={usageFilter} onChange={(event) => { setUsageFilter(event.target.value); setSelectedYarnId(null) }}>
+                    <option value="all">所有</option><option value="unused">未使用</option><option value="used">已使用</option>
+                  </select>
+                </label>
                 <SelectLike
                   label={materialFilter}
                   options={materialFilters}
@@ -737,6 +772,8 @@ function App() {
             unit="種"
           >
             <YarnsView
+              onToggleUsed={toggleYarnUsed}
+              savingUsage={savingUsage}
               onEdit={() => { setEditingEntity(selectedYarn); setModalType('yarns') }}
               onOpenPattern={openPattern}
               onCloseDetail={() => setSelectedYarnId(null)}
@@ -915,6 +952,7 @@ function AuthPage({
 }
 
 function OverviewPage({
+  totalSpent,
   completedCount,
   searchQuery,
   searchGroups,
@@ -961,6 +999,12 @@ function OverviewPage({
             </button>
           )
         })}
+      </div>}
+
+      {!searching && <div className="expense-total" aria-label="總花費">
+        <Wallet size={24} aria-hidden="true" />
+        <span>總花費</span>
+        <strong>{totalSpent.toLocaleString('zh-TW', { maximumFractionDigits: 2 })}<small> 元</small></strong>
       </div>}
 
       {searching && <div className="global-search-results">
@@ -1016,6 +1060,8 @@ function EntityPage({
 }
 
 function YarnsView({
+  onToggleUsed,
+  savingUsage,
   onEdit,
   onOpenPattern,
   onCloseDetail,
@@ -1061,6 +1107,8 @@ function YarnsView({
       </div>
       {selectedYarn && <ResizeHandle onResize={onResizeStart} />}
       <YarnDetail
+        onToggleUsed={onToggleUsed}
+        savingUsage={savingUsage}
         onEdit={onEdit}
         linkedPatterns={linkedPatterns}
         onOpenPattern={onOpenPattern}
@@ -1218,7 +1266,7 @@ function YarnTable({ patterns, selectedYarnId, setSelectedYarnId, yarns }) {
                   <img alt="" src={yarn.image} />
                   <div>
                     <strong>{yarn.name}</strong>
-                    <span>{yarn.brand}</span>
+                    <span>{yarn.brand} · {yarn.isUsed ? '已使用' : '未使用'}</span>
                   </div>
                 </button>
               </td>
@@ -1255,7 +1303,7 @@ function YarnGrid({ selectedYarnId, setSelectedYarnId, yarns }) {
           <img alt="" src={yarn.image} />
           <strong>{yarn.name}</strong>
           <span>
-            {yarn.color} / {yarn.quantity} 球
+            {yarn.color} / {yarn.quantity} 球 / {yarn.isUsed ? '已使用' : '未使用'}
           </span>
         </button>
       ))}
@@ -1290,6 +1338,8 @@ function ProjectCards({ onSelect, projects, selectedProjectId }) {
 }
 
 function YarnDetail({
+  onToggleUsed,
+  savingUsage,
   onEdit,
   linkedPatterns,
   onClose,
@@ -1316,6 +1366,7 @@ function YarnDetail({
           {selectedYarn.color}
         </Fact>
         <Fact label="材質">{selectedYarn.material}</Fact>
+        <Fact label="使用狀態"><label className="usage-toggle"><input type="checkbox" role="switch" aria-label="已使用" checked={Boolean(selectedYarn.isUsed)} disabled={savingUsage} onChange={() => onToggleUsed(selectedYarn)} /><span>{selectedYarn.isUsed ? '已使用' : '未使用'}</span></label></Fact>
         <Fact label="重量">{formatYarnUnit(selectedYarn.weight, 'g')}</Fact>
         <Fact label="數量">{selectedYarn.quantity} 球</Fact>
         <Fact label="價格">{formatYarnUnit(selectedYarn.price, '元')}</Fact>
@@ -1364,6 +1415,7 @@ function PatternDetail({ onEdit, onClose, onDelete, onOpenYarn, onPreviewImage, 
       </button>
       <dl className="facts">
         <Fact label="類別">{pattern.category}</Fact>
+        <Fact label="價格">{formatYarnUnit(pattern.price, '元')}</Fact>
         <Fact label="來源">{pattern.sourceType}</Fact>
         <Fact label="檔案/網站">{pattern.source}</Fact>
       </dl>
@@ -1692,6 +1744,7 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
                 />
               </label>
               <Field label="材質" value={form.material ?? ''} onChange={(value) => updateField('material', value)} />
+              <label className="usage-toggle"><input type="checkbox" role="switch" aria-label="已使用" checked={Boolean(form.isUsed)} onChange={(event) => updateField('isUsed', event.target.checked)} /><span>{form.isUsed ? '已使用' : '未使用'}</span></label>
               <Field label="重量" unit="g" type="number" min="0" step="any" value={form.weight} onChange={(value) => updateField('weight', value)} />
               <Field label="數量" unit="球" type="number" min="0" step="1" required value={form.quantity} onChange={(value) => updateField('quantity', value)} />
               <Field label="價格" unit="元" type="number" min="0" step="any" value={form.price} onChange={(value) => updateField('price', value)} />
@@ -1709,6 +1762,7 @@ function EntityModal({ initialValues, onClose, onSubmit, patterns, yarns, type }
           {type === 'patterns' && (
             <>
               <Field label="類別" value={form.category ?? ''} onChange={(value) => updateField('category', value)} />
+              <Field label="價格" unit="元" type="number" min="0" step="0.01" value={form.price} onChange={(value) => updateField('price', value)} />
               <Field label="來源" value={form.source ?? ''} onChange={(value) => updateField('source', value)} />
               <RelationshipPicker
                 amounts={new Map(form.yarnUsage.map((usage) => [usage.yarnId, usage.amount]))}

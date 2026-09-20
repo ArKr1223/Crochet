@@ -41,6 +41,9 @@ create table if not exists public.pattern_yarns (
   unique (pattern_id, yarn_id)
 );
 
+alter table public.yarns add column if not exists is_used boolean not null default false;
+alter table public.patterns add column if not exists price numeric(12, 2) check (price >= 0);
+
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,

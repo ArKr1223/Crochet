@@ -30,6 +30,7 @@ const yarnFromRow = (row) => ({
   weight: row.weight ?? '',
   quantity: row.quantity ?? 0,
   price: row.price ?? '',
+  isUsed: row.is_used ?? false,
   purchasePlace: row.purchase_place ?? '',
   notes: row.notes ?? '',
   storage: row.storage ?? '',
@@ -48,6 +49,7 @@ const yarnToRow = (yarn, userId) => ({
   weight: yarn.weight,
   quantity: yarn.quantity,
   price: yarn.price,
+  is_used: Boolean(yarn.isUsed),
   purchase_place: yarn.purchasePlace,
   notes: yarn.notes,
   storage: yarn.storage,
@@ -55,6 +57,7 @@ const yarnToRow = (yarn, userId) => ({
 })
 
 const patternFromRow = (row, links) => ({
+  price: row.price ?? '',
   id: row.id,
   name: row.name,
   category: row.category ?? '',
@@ -68,6 +71,7 @@ const patternFromRow = (row, links) => ({
 })
 
 const patternToRow = (pattern, userId) => ({
+  price: pattern.price === '' || pattern.price == null ? null : Number(pattern.price),
   id: pattern.id,
   user_id: userId,
   name: pattern.name,
@@ -342,6 +346,14 @@ export async function updateYarnImage(yarnId, imagePath) {
     .eq('id', yarnId)
   if (error) throw error
   return imageUrlFromPath(imagePath)
+}
+
+export async function updateYarnUsed(yarnId, isUsed, userId) {
+  const { data, error } = await requireSupabase().from('yarns')
+    .update({ is_used: isUsed, updated_at: new Date().toISOString() })
+    .eq('id', yarnId).eq('user_id', userId).select('id, is_used').single()
+  if (error) throw error
+  return data.is_used
 }
 
 export async function updatePatternImage(patternId, imagePath) {
